@@ -11,7 +11,7 @@ from functions import *
 
 class Game:
 
-    def __init__(self, root, window_width=1200, window_height=700):
+    def __init__(self, root, window_width=1200, window_height=500):
         self.DEBUG = False
         self.root_dir = getcwd()
         self.texts_dir = path.join(self.root_dir, "Texts")
@@ -44,7 +44,7 @@ class Game:
         #################################
         # ------------ GUI ------------ #
         #################################
-        text_style = ("Raleway", 18)  # font settings for text box
+        text_style = ("Raleway", 20)  # font settings for text box
         textname_style = ("Raleway", 30)
         title_style = ("Eras Medium ITC", 60)
         button_style = ("Raleway", 12)
@@ -59,20 +59,18 @@ class Game:
         self.logo_label.grid(column=2, row=0)
 
         # Text name
-        self.textname = tk.Label(
-            root, text=f'Text Name: \n"{self.text.name}"', font=textname_style
-        )
+        self.textname = tk.Label(root, text=f'"{self.text.name}"', font=textname_style)
         self.textname.grid(column=0, row=0)
 
         # Title
-        self.title = tk.Label(root, text=f"Typing\nTrainer", font=title_style)
+        self.title = tk.Label(root, text=f"Typing Trainer", font=title_style)
         self.title.grid(column=1, row=0)
 
         # page input
         self.text_box = tk.Text(
             root,
             height=self.display_nlines,
-            width=int(self.width * 0.055),
+            width=int(self.width * 0.06),
             padx=5,
             pady=5,
             font=text_style,
