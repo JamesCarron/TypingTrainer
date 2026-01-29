@@ -44,8 +44,9 @@ class Game:
         #################################
         # ------------ GUI ------------ #
         #################################
-        text_style = ("Raleway", 20)  # font settings for text box
+        text_style = ("Roboto", 20)  # font settings for text box
         textname_style = ("Raleway", 30)
+        textposition_style = ("Raleway", 14)
         title_style = ("Eras Medium ITC", 60)
         button_style = ("Raleway", 12)
 
@@ -58,9 +59,24 @@ class Game:
         self.logo_label.image = logo
         self.logo_label.grid(column=2, row=0)
 
-        # Text name
-        self.textname = tk.Label(root, text=f'"{self.text.name}"', font=textname_style)
-        self.textname.grid(column=0, row=0)
+        # Text name frame (contains name and position labels)
+        textname_frame = tk.Frame(root)
+        textname_frame.grid(column=0, row=0)
+
+        self.textname = tk.Label(
+            textname_frame,
+            text=f'"{self.text.name}"',
+            font=textname_style,
+        )
+        self.textname.pack()
+
+        # Text position info
+        self.textposition = tk.Label(
+            textname_frame,
+            text=f"{self.text.position}/{self.text.lines} ({self.text.position/self.text.lines:.1%})",
+            font=textposition_style,
+        )
+        self.textposition.pack()
 
         # Title
         self.title = tk.Label(root, text=f"Typing Trainer", font=title_style)
@@ -78,19 +94,6 @@ class Game:
         self.text_box.grid(column=0, row=1, columnspan=3)
         self.text_box.config(wrap="word")
         self.draw_textbox()
-
-        # user input
-        # self.userinput_box = tk.Text(
-        #     root,
-        #     height=4,
-        #     width=int(self.width * 0.055),
-        #     padx=5,
-        #     pady=5,
-        #     font=text_style,
-        # )
-        # self.userinput_box.grid(column=0, row=2, columnspan=3)
-        # self.userinput_box.config(wrap="word")
-        # self.draw_userinput()
 
         # instructions
         self.instructions = tk.Label(root, text="Press Enter to start", font="Raleway")
@@ -134,36 +137,6 @@ class Game:
         browse_text.set("Next")
         brows_btn.grid(column=2, row=3)
 
-        # STYLING EXPERIMENTATION
-        # import tkinter.font as tkFont
-        # self.font_index = 0
-        # self.fonts = list(tkFont.families())
-        # self.change_font(self.title, 0, 60)  # set to start
-        # self.font_shortlist = list()
-        # # prev font button
-        # browse_text = tk.StringVar()
-        # font_btn = tk.Button(root, textvariable=browse_text,
-        #                       command=lambda: self.change_font(self.title, -1),
-        #                       font=button_style, bg=acc_primary_c, fg=acc_primary_fc, height=1, width=10)
-        # browse_text.set("PrevFont")
-        # font_btn.grid(column=0, row=5)
-        #
-        # # font shortlist button
-        # browse_text = tk.StringVar()
-        # font_btn = tk.Button(root, textvariable=browse_text,
-        #                       command=lambda: self.shortlist_font(),
-        #                       font=button_style, bg=acc_primary_c, fg=acc_primary_fc, height=1, width=10)
-        # browse_text.set("AddFontToShortlist")
-        # font_btn.grid(column=1, row=5)
-        #
-        # # next font button
-        # browse_text = tk.StringVar()
-        # font_btn = tk.Button(root, textvariable=browse_text,
-        #                       command=lambda: self.change_font(self.title, 1, 60),
-        #                       font=button_style, bg=acc_primary_c, fg=acc_primary_fc, height=1, width=10)
-        # browse_text.set("NextFont")
-        # font_btn.grid(column=2, row=5)
-
         #################################
         # ---------- STARTUP ---------- #
         #################################
@@ -171,59 +144,6 @@ class Game:
         root.bind("<Key>", self.key_handler)
         self.time_start = datetime.now()
         self.set_state("READY")
-
-    def change_font(self, item, n, shortlist=None, size=60):
-        self.font_index += n
-        try:
-            font = self.fonts[self.font_index]
-        except IndexError:
-            if n > 0:
-                self.font_index = 0
-                font = self.fonts[self.font_index]
-            else:
-                self.font_index = len(self.fonts)
-                font = self.fonts[self.font_index]
-
-        # shortlist = ["Copperplate Gothic Bold", "Gill Sans MT",  "Georgia", "Sitka Small", "System", "Courier New",
-        # "Eras Light ITC", "Papyrus", "Eras Medium ITC", "Copperplate Gothic Light", "HGPKyokashotai", "Roboto Slab",
-        # "HGMaruGothicMPRO", "Courier"]
-
-        shortlist = ["Eras Medium ITC"]
-
-        if shortlist is None:
-            skip_fonts = ["Cambria Math"]
-            while font in skip_fonts:
-                self.font_index += n
-                try:
-                    font = self.fonts[self.font_index]
-                except IndexError:
-                    if n > 0:
-                        self.font_index = 0
-                        font = self.fonts[self.font_index]
-                    else:
-                        self.font_index = len(self.fonts)
-                        font = self.fonts[self.font_index]
-        else:
-            while font not in shortlist:
-                self.font_index += n
-                try:
-                    font = self.fonts[self.font_index]
-                except IndexError:
-                    if n > 0:
-                        self.font_index = 0
-                        font = self.fonts[self.font_index]
-                    else:
-                        self.font_index = len(self.fonts)
-                        font = self.fonts[self.font_index]
-
-        item.configure(font=(font, size))
-        print(f"Font: {font}")
-
-    def shortlist_font(self):
-        self.font_shortlist += [self.fonts[self.font_index]]
-        self.font_shortlist = list(set(self.font_shortlist))
-        print("Font Shortlist:")
-        [print(f"{i}:{font}") for i, font in enumerate(self.font_shortlist)]
 
     def save_game(self):
         """:cvar
@@ -256,7 +176,6 @@ class Game:
             self.game_settings = pickle.load(save_file)
         self.text.position = self.game_settings["Texts"][self.text.name]["line"]
         self.game_history = self.game_settings["History"]
-        # self.game_history = dict() # CLEAR
         print(f"Game Loaded: \n{self.game_settings['Texts']}")
         print(f"{len(self.game_history)} history entries loaded")
         try:
@@ -276,11 +195,9 @@ class Game:
         if self.state == "READY":
             self.user_input = ""
             self.user_input_full = ""
-            # self.draw_userinput()
             self.instructions["text"] = "Press Enter to start."
 
         if self.state == "GAME":
-            # self.instructions['text'] = ''
             self.instructions["text"] = f"Press Enter to finish or Esc to exit."
             if self.results_str != "":
                 self.instructions["text"] += f" Prev Result: {self.results_str}"
@@ -295,8 +212,6 @@ class Game:
             print(
                 f"KeyPress - Char:{event.char:1}, Keysym:{event.keysym:8}, Keycode:{event.keycode:4}, State:{event.state:2}"
             )
-            # f"\tUser Input: '{self.user_input}', len: {len(self.user_input)}")
-
         if self.state == "READY":
             if event.keycode == 13:  # Enter
                 self.set_state("GAME")
@@ -326,7 +241,6 @@ class Game:
                     self.user_input += event.char
                     self.user_input_full += event.char
 
-            # self.draw_userinput()
             self.draw_textbox()
 
     def log_game_history(self, results):
@@ -378,6 +292,7 @@ class Game:
             self.log_game_history(results)
             self.text.position += 1
             self.draw_textbox()
+            self.update_position_label()
             self.save_game()
             self.results_str = f"Wpm: {results['wpm']:.2f}"
         else:
@@ -419,13 +334,32 @@ class Game:
 
         self.text_box.configure(state="disabled")
 
-    def draw_userinput(self):
-        self.userinput_box.configure(state="normal")
-        self.userinput_box.delete(1.0, "end")  # clear
-        self.userinput_box.insert(1.0, f"{self.user_input}")  # new user input
-        self.userinput_box.configure(state="disabled")
-
     def change_pos(self, n):
         self.text.position += n
         self.draw_textbox()
+        self.update_position_label()
         self.set_state("READY")
+
+    def update_position_label(self):
+        self.textposition.config(
+            text=f"{self.text.position}/{self.text.lines} ({self.text.position/self.text.lines:.1%})"
+        )
+
+
+if __name__ == "__main__":
+    import tkinter as tk
+    from functions import setup_window
+
+    DEBUG = True
+
+    root = tk.Tk()
+    width = 1200
+    height = 500
+    canvas = setup_window(
+        root, screen_dims=(1920, 720), window_dims=(width, height), scaling=1.0
+    )
+    canvas.grid(columnspan=3, rowspan=3)
+
+    type_trainer = Game(root)
+
+    root.mainloop()
