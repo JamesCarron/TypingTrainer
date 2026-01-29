@@ -13,7 +13,7 @@ class Text:
         self.position = 0  # what line number the user has reached
         self.line_len_limit = 100
 
-    def clean_file(self, file, line_len_limit=100, split_type='LHS'):
+    def clean_file(self, file, line_len_limit=100, split_type="LHS"):
         """
         Take a raw text file and process it so its ready for use in the game
         Steps:
@@ -24,19 +24,24 @@ class Text:
         """
         new_contents = list()
         for line in file:
-            if line in ['', '\n']: continue  # ignore empty lines
+            if line in ["", "\n"]:
+                continue  # ignore empty lines
             new_contents += subdivide_line(line.strip(), line_len_limit, split_type)
 
         for line in new_contents:
             line = line.strip()  # remove any white space at the start or end of a line
-            sub(r'[\s]{2,}', ' ', line)  # replace any occurrence of two or more spaces with a single space.
+            sub(
+                r"[\s]{2,}", " ", line
+            )  # replace any occurrence of two or more spaces with a single space.
 
         return new_contents
 
     def load(self, texts_dir):
         with open(path.join(texts_dir, self.loc)) as file:
             self.contents = file.readlines()
-        self.contents = self.clean_file(self.contents, line_len_limit=200, split_type='LHS')
+        self.contents = self.clean_file(
+            self.contents, line_len_limit=200, split_type="LHS"
+        )
         self.loaded = True
         self.lines = len(self.contents)
 

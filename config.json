@@ -1,0 +1,7 @@
+{
+  "require_accuracy": true,
+  "require_wpm": true,
+  "min_accuracy": 0.99,
+  "min_wpm": 60.0,
+  "show_criteria": true
+}
