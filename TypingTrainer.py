@@ -12,6 +12,13 @@ from functions import *
 class Game:
 
     def __init__(self, root, window_width=1200, window_height=500):
+        """Initialize the TypingTrainer game.
+
+        Args:
+            root: The tkinter root window
+            window_width: Width of the game window in pixels (default: 1200)
+            window_height: Height of the game window in pixels (default: 500)
+        """
         self.DEBUG = False
         self.root_dir = getcwd()
         self.texts_dir = path.join(self.root_dir, "Texts")
@@ -121,14 +128,6 @@ class Game:
         browse_text.set("Prev")
         self.prev_btn.grid(column=0, row=3)
 
-        # # save button
-        # browse_text = tk.StringVar()
-        # brows_btn = tk.Button(root, textvariable=browse_text,
-        #                       command=lambda: self.save_game(),
-        #                       font=button_style, bg=acc_primary_c, fg=acc_primary_fc, height=1, width=10)
-        # browse_text.set("Save Game")
-        # brows_btn.grid(column=1, row=4)
-
         # next line button
         browse_text = tk.StringVar()
         self.next_btn = tk.Button(
@@ -154,16 +153,11 @@ class Game:
         self.set_state("READY")
 
     def save_game(self):
-        """:cvar
-        progress is the current line for each text the user is one
-        history is the summmary of each attempt made.
-            - eventtime
-            - duration
-            - accuracy
-            - wpm
-            - guess
-            - answer
-            - match
+        """Save the current game state to a pickle file.
+
+        Saves:
+            - Current text position for each text
+            - Game history with attempt details (eventtime, duration, accuracy, wpm, etc.)
         """
         game_settings = {
             "Texts": {self.text.name: {"line": self.text.position}},
@@ -175,9 +169,10 @@ class Game:
             print("SAVED GAME")
 
     def load_game(self):
-        """
-        Open the save game
-        :return:
+        """Load the saved game state from a pickle file.
+
+        Restores the text position and game history from the save file.
+        Prints loading status and last history entry to console.
         """
 
         with open(self.save_fname, "rb") as save_file:
@@ -194,6 +189,14 @@ class Game:
             print(f"Last History Entry: None")
 
     def set_state(self, new_state):
+        """Set the game state and update UI accordingly.
+
+        Args:
+            new_state: New game state, must be one of: "INIT", "READY", or "GAME"
+
+        Raises:
+            ValueError: If new_state is not a valid game state
+        """
         valid_game_states = ["INIT", "READY", "GAME"]
         if new_state in valid_game_states:
             self.state = new_state
@@ -220,6 +223,18 @@ class Game:
             print(f"GameState: {self.state}")
 
     def key_handler(self, event):
+        """Handle all keyboard input events.
+
+        Processes key presses based on current game state:
+        - READY: Enter to start game
+        - GAME: Typing input, Enter to finish, ESC to exit, Ctrl+Backspace to delete word
+        - Global: Ctrl+Q to quit
+
+        Also updates caps lock indicator based on keyboard state.
+
+        Args:
+            event: tkinter keyboard event object
+        """
         DEBUG = False
 
         # Check caps lock state (bit 2 in event.state for Caps Lock)
@@ -276,6 +291,11 @@ class Game:
             self.draw_textbox()
 
     def log_game_history(self, results):
+        """Log typing attempt results to game history.
+
+        Args:
+            results: Dictionary containing typing statistics (duration, accuracy, wpm, etc.)
+        """
         self.game_history[self.time_start] = {
             "EventTime": f"{self.time_start:%d-%m-%Y %H:%M:%S}",
             "TextName": self.text.name,
@@ -289,8 +309,10 @@ class Game:
         }
 
     def clear_game_history(self, TextName="All"):
-        """
-        Reset the game_history. If specified will only remove the passed Text
+        """Reset the game history.
+
+        Args:
+            TextName: Name of specific text to clear history for, or "All" to clear all history (default: "All")
         """
         if TextName == "All":
             self.game_history = dict()
@@ -302,6 +324,17 @@ class Game:
             }
 
     def passing_grade(self, results):
+        """Determine if typing attempt meets passing criteria.
+
+        Args:
+            results: Dictionary containing accuracy metric
+
+        Returns:
+            bool: True if accuracy is 100%, False otherwise
+
+        Raises:
+            ValueError: If accuracy exceeds 100%
+        """
         if results["accuracy"] < 1:
             return False
         elif results["accuracy"] == 1:
@@ -310,6 +343,13 @@ class Game:
             raise ValueError(f"results['accuracy'] > 100% - {results['accuracy']:=}")
 
     def calc_typing_stats(self):
+        """Calculate typing statistics and handle pass/fail logic.
+
+        Computes duration, accuracy, and WPM for the current attempt.
+        If passing grade: logs history, advances position, and saves game.
+        If failing: logs history and displays error details.
+        Updates the results display and instructions text.
+        """
         results = dict()
         results["duration"] = datetime.now() - self.time_start
         results["duration"] = round(
@@ -342,6 +382,12 @@ class Game:
         print(self.results_str)
 
     def draw_textbox(self):
+        """Update the text box display with current text and user input feedback.
+
+        Shows the current line and upcoming lines from the text.
+        Highlights correct characters in green and incorrect characters in red.
+        Displays upcoming lines in grey.
+        """
         nl = "\n"
         pos = self.text.position
         self.text_box.configure(state="normal")
@@ -367,12 +413,18 @@ class Game:
         self.text_box.configure(state="disabled")
 
     def change_pos(self, n):
+        """Change the current text position.
+
+        Args:
+            n: Number of lines to move (positive for forward, negative for backward)
+        """
         self.text.position += n
         self.draw_textbox()
         self.update_position_label()
         self.set_state("READY")
 
     def update_position_label(self):
+        """Update the position label to display current line number and progress percentage."""
         self.textposition.config(
             text=f"{self.text.position}/{self.text.lines} ({self.text.position/self.text.lines:.1%})"
         )
