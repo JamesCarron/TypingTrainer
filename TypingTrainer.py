@@ -95,13 +95,19 @@ class Game:
         self.text_box.config(wrap="word")
         self.draw_textbox()
 
+        # caps lock indicator
+        self.capslock_indicator = tk.Label(
+            root, text="", font=("Raleway", 10), fg="orange"
+        )
+        self.capslock_indicator.grid(column=1, row=2)
+
         # instructions
         self.instructions = tk.Label(root, text="Press Enter to start", font="Raleway")
         self.instructions.grid(column=1, row=3)
 
         # prev line button
         browse_text = tk.StringVar()
-        brows_btn = tk.Button(
+        self.prev_btn = tk.Button(
             root,
             textvariable=browse_text,
             command=lambda: self.change_pos(-1),
@@ -110,9 +116,10 @@ class Game:
             fg=acc_primary_fc,
             height=1,
             width=10,
+            takefocus=0,
         )
         browse_text.set("Prev")
-        brows_btn.grid(column=0, row=3)
+        self.prev_btn.grid(column=0, row=3)
 
         # # save button
         # browse_text = tk.StringVar()
@@ -124,7 +131,7 @@ class Game:
 
         # next line button
         browse_text = tk.StringVar()
-        brows_btn = tk.Button(
+        self.next_btn = tk.Button(
             root,
             textvariable=browse_text,
             command=lambda: self.change_pos(1),
@@ -133,9 +140,10 @@ class Game:
             fg=acc_primary_fc,
             height=1,
             width=10,
+            takefocus=0,
         )
         browse_text.set("Next")
-        brows_btn.grid(column=2, row=3)
+        self.next_btn.grid(column=2, row=3)
 
         #################################
         # ---------- STARTUP ---------- #
@@ -196,11 +204,17 @@ class Game:
             self.user_input = ""
             self.user_input_full = ""
             self.instructions["text"] = "Press Enter to start."
+            self.prev_btn.config(takefocus=1)
+            self.next_btn.config(takefocus=1)
 
         if self.state == "GAME":
             self.instructions["text"] = f"Press Enter to finish or Esc to exit."
             if self.results_str != "":
                 self.instructions["text"] += f" Prev Result: {self.results_str}"
+            self.prev_btn.config(takefocus=0)
+            self.next_btn.config(takefocus=0)
+            # Remove focus from buttons if they have it
+            self.root.focus_set()
 
         if self.DEBUG:
             print(f"GameState: {self.state}")
@@ -208,20 +222,38 @@ class Game:
     def key_handler(self, event):
         DEBUG = False
 
+        # Check caps lock state (bit 2 in event.state for Caps Lock)
+        caps_on = bool(event.state & 0x2)
+
+        # If Caps Lock key is pressed, the state toggles, so we need to invert our check
+        if event.keysym == "Caps_Lock":
+            caps_on = not caps_on
+
+        if caps_on:
+            self.capslock_indicator.config(text="⚠ CAPS LOCK ON")
+        else:
+            self.capslock_indicator.config(text="")
+
         if DEBUG:
             print(
                 f"KeyPress - Char:{event.char:1}, Keysym:{event.keysym:8}, Keycode:{event.keycode:4}, State:{event.state:2}"
             )
+
+        # Handle Ctrl+Q globally (in all states)
+        if (event.state & 0x4) and event.keysym == "q":
+            exit()
+
         if self.state == "READY":
             if event.keycode == 13:  # Enter
                 self.set_state("GAME")
 
         elif self.state == "GAME":
-            if event.state == 4:  # Control is being pressed with this key
+            if (
+                event.state & 0x4
+            ):  # Control is being pressed with this key (bitwise check)
                 if event.keysym == "BackSpace":
-                    self.user_input = " ".join(self.user_input.split()[:-1])
-                if event.keysym == "q":
-                    exit()
+                    self.user_input = " ".join(self.user_input.split()[:-1]) + " "
+                    self.draw_textbox()
             else:
                 if event.keycode == 13:  # Enter
                     self.calc_typing_stats()
