@@ -53,6 +53,7 @@ class Game:
         self.min_accuracy = 1.0
         self.min_wpm = 20.0
         self.show_criteria = True
+        self.flash_on_mistake = True  # New: default enabled
         self.load_config()
 
         self.available_texts = {"Art of War": "artofwar.txt"}
@@ -94,6 +95,7 @@ class Game:
         self.require_accuracy_var = tk.BooleanVar(value=self.require_accuracy)
         self.require_wpm_var = tk.BooleanVar(value=self.require_wpm)
         self.show_criteria_var = tk.BooleanVar(value=self.show_criteria)
+        self.flash_on_mistake_var = tk.BooleanVar(value=self.flash_on_mistake)
         criteria_menu.add_checkbutton(
             label="Show Criteria",
             variable=self.show_criteria_var,
@@ -109,6 +111,12 @@ class Game:
             label="Require WPM",
             variable=self.require_wpm_var,
             command=self.toggle_require_wpm,
+        )
+        criteria_menu.add_separator()
+        criteria_menu.add_checkbutton(
+            label="Flash on Mistake",
+            variable=self.flash_on_mistake_var,
+            command=self.toggle_flash_on_mistake,
         )
         criteria_menu.add_separator()
         criteria_menu.add_command(
@@ -172,6 +180,13 @@ class Game:
         self.wpm_label.pack()
 
         self.update_criteria_labels()
+
+        # Flash label for mistakes
+        self.flash_label = tk.Label(
+            root, text="fuck", font=("Arial", 48), fg="red", bg="yellow"
+        )
+        self.flash_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.flash_label.lower()  # Hide initially
 
         # Title
         self.title = tk.Label(root, text=f"Typing Trainer", font=title_style)
@@ -275,6 +290,9 @@ class Game:
             self.min_accuracy = float(config.get("min_accuracy", 1.0))
             self.min_wpm = float(config.get("min_wpm", 20.0))
             self.show_criteria = bool(config.get("show_criteria", True))
+            self.flash_on_mistake = bool(config.get("flash_on_mistake", True))
+            if hasattr(self, 'flash_on_mistake_var'):
+                self.flash_on_mistake_var.set(self.flash_on_mistake)
         except (json.JSONDecodeError, OSError, ValueError):
             self.save_config()
 
@@ -286,9 +304,13 @@ class Game:
             "min_accuracy": round(float(self.min_accuracy), 4),
             "min_wpm": round(float(self.min_wpm), 2),
             "show_criteria": self.show_criteria,
+            "flash_on_mistake": self.flash_on_mistake,
         }
         with open(self.config_fname, "w", encoding="utf-8") as config_file:
             json.dump(config, config_file, indent=2)
+    def toggle_flash_on_mistake(self):
+        self.flash_on_mistake = bool(self.flash_on_mistake_var.get())
+        self.save_config()
 
     def toggle_show_criteria(self):
         self.show_criteria = bool(self.show_criteria_var.get())
@@ -481,6 +503,10 @@ class Game:
         if self.DEBUG:
             print(f"GameState: {self.state}")
 
+    def flash_mistake(self):
+        self.flash_label.lift()
+        self.root.after(300, self.flash_label.lower)
+
     def key_handler(self, event):
         """Handle all keyboard input events.
 
@@ -544,6 +570,16 @@ class Game:
                 else:
                     if self.user_input == "":
                         self.time_start = datetime.now()
+                    # Check for mistake
+                    target_line = self.text.get_current_line()
+                    next_index = len(self.user_input)
+                    if (
+                        self.flash_on_mistake
+                        and next_index < len(target_line)
+                        and event.char
+                        and event.char != target_line[next_index]
+                    ):
+                        self.flash_mistake()
                     self.user_input += event.char
                     self.user_input_full += event.char
 
@@ -632,7 +668,7 @@ class Game:
             self.update_position_label()
             self.save_game()
             self.results_str = (
-                f"Wpm: {results['wpm']:.2f}, Accuracy: {results['accuracy']:.2%}"
+                f"Wpm: {results['wpm']:.0f}, Acc: {results['accuracy']:.1%}"
             )
         else:
             grade = "FAIL"
@@ -646,7 +682,7 @@ class Game:
             )
 
         self.instructions["text"] = (
-            f"Press Enter to finish or Esc to exit. Prev Result: {self.results_str}"
+            f"Press Enter to finish or Esc to exit. Prev: {self.results_str}"
         )
         print(self.results_str)
 
