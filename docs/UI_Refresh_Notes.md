@@ -109,9 +109,20 @@ The analysis is pure functions over history records, so it belongs in the engine
 
 One storage decision falls out: JSON history is fine at 208 records and fine at 2,000, but keystroke lists at 10,000 lines is tens of megabytes read and rewritten on every attempt. SQLite is the obvious answer if keystroke capture goes ahead.
 
-## Open decisions
+## Decisions (2026-09-19)
 
-1. How far to take the typing surface: the safe restyle (items 1–5), or the full Monkeytype treatment including chrome fade and stop-on-error?
-2. Start recording keystrokes? It is the gate on most of the analysis, and it cannot be applied retrospectively — every day without it is a day of data not collected.
-3. Which analysis lands first, given the 208 records already sitting there?
-4. Does the analysis get its own page, or a panel in the existing one?
+All four settled at the end of the research session. They are ambitious on purpose: the whole set was chosen, not a subset.
+
+1. **The typing surface gets the full Monkeytype treatment, plus stop-on-error.** Card gone, inverted colour convention, sliding caret, dimmed previous line, live WPM, chrome fading during GAME — and a mode where a wrong character is not accepted at all, so you cannot outrun your own accuracy. Stop-on-error is a setting, defaulting off, because it changes how the app feels and the existing criteria already enforce accuracy at line level.
+2. **Keystrokes are recorded from now on, and history moves to SQLite in the same change.** Doing both at once avoids migrating twice. This goes first, before any UI work, so data accumulates while the rest is being built.
+3. **All four analysis groups are wanted**: weak-point diagnosis, speed diagnosis, progress over time, and the improvement loop. Weak-point and progress work on the 208 existing records immediately; speed diagnosis only starts producing results once keystroke data accumulates, which is the second reason instrumentation goes first.
+4. **Session summary first, deeper page behind it.** Stopping a session shows the results screen; a link on it opens the full analysis at its own route. The typing screen itself stays empty, which is the entire point of the surface work.
+
+## Build order
+
+Same wave structure as the refactor: serial where judgement is needed, parallel where the file sets are disjoint, a green suite at every gate.
+
+- **Wave 1 — the data layer** (serial). SQLite store behind the existing `history` API, keystroke capture through `Session.submit_line`, `stop_on_error` added to settings, JSON and pickle both migrating in, tests rewritten. Nothing else can start until the record shape is fixed.
+- **Wave 2 — analysis engine and typing surface** (parallel, disjoint). `analysis.py` with the weak-point, speed and progress functions over the store; separately the page rewrite in `templates/` and `static/`.
+- **Wave 3 — the results screen and the stats route** (parallel, disjoint). Session summary plus `/stats`; separately `drills.py` for the improvement loop.
+- **Wave 4 — wiring** (serial, small). Drills into the UI, adaptive criteria, and the documents updated.
