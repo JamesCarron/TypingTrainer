@@ -1,0 +1,277 @@
+/*
+ * page.css -- neutral tokens of this project's own (not the Auterion house
+ * stylesheet: TypingTrainer is a personal public repo). Light and dark via
+ * prefers-color-scheme, with an explicit override hook via data-theme, per
+ * the same discipline as the house pages: semantic tokens on :root, never a
+ * raw hex anywhere else.
+ *
+ * Written 2026-09-19 for stage 6 of the TypingTrainer refactor
+ * (docs/Refactor_Plan.md).
+ */
+
+:root {
+  --tt-ink: #1b1f23;
+  --tt-ink-secondary: #5b6470;
+  --tt-bg: #f5f6f8;
+  --tt-surface: #ffffff;
+  --tt-line: #d7dbe1;
+  --tt-accent: #1f8a8a;
+  --tt-on-accent: #ffffff;
+  --tt-correct: #1c8a4b;
+  --tt-incorrect: #c62f2f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-ink: #eaedf1;
+    --tt-ink-secondary: #a4acb8;
+    --tt-bg: #14171a;
+    --tt-surface: #1d2124;
+    --tt-line: #333941;
+    --tt-accent: #3fb8b8;
+    --tt-on-accent: #0c1112;
+    --tt-correct: #4fd07f;
+    --tt-incorrect: #ff6b6b;
+  }
+}
+
+:root[data-theme="dark"] {
+  --tt-ink: #eaedf1;
+  --tt-ink-secondary: #a4acb8;
+  --tt-bg: #14171a;
+  --tt-surface: #1d2124;
+  --tt-line: #333941;
+  --tt-accent: #3fb8b8;
+  --tt-on-accent: #0c1112;
+  --tt-correct: #4fd07f;
+  --tt-incorrect: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--tt-bg);
+  color: var(--tt-ink);
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+header.app-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+header.app-header h1 {
+  font-size: 28px;
+  margin: 0;
+}
+
+#text-name {
+  font-size: 20px;
+  color: var(--tt-ink-secondary);
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  color: var(--tt-ink-secondary);
+}
+
+#position-label {
+  cursor: pointer;
+  color: var(--tt-accent);
+  text-decoration: underline dotted;
+}
+
+#criteria-display {
+  display: flex;
+  gap: 12px;
+}
+
+.criterion {
+  font-size: 13px;
+}
+
+#error-bar {
+  background: var(--tt-incorrect);
+  color: var(--tt-on-accent);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+#error-bar[hidden] {
+  display: none;
+}
+
+.typing-area-wrapper {
+  position: relative;
+}
+
+#typing-area {
+  background: var(--tt-surface);
+  border: 1px solid var(--tt-line);
+  border-radius: 8px;
+  padding: 20px;
+  font-size: 22px;
+  line-height: 1.6;
+  min-height: 160px;
+  outline: none;
+}
+
+#typing-area:focus {
+  border-color: var(--tt-accent);
+}
+
+#current-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.char-correct {
+  color: var(--tt-correct);
+}
+
+.char-incorrect {
+  color: var(--tt-incorrect);
+}
+
+.char-incorrect-space {
+  text-decoration: underline;
+}
+
+.char-pending {
+  color: var(--tt-ink);
+}
+
+#upcoming-lines {
+  color: var(--tt-ink-secondary);
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+
+.upcoming-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#flash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 56px;
+  font-weight: bold;
+  color: var(--tt-incorrect);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 60ms ease-out;
+}
+
+#flash::before {
+  content: "\2717";
+}
+
+#flash.flash-active {
+  opacity: 0.85;
+}
+
+#capslock-warning {
+  color: var(--tt-incorrect);
+  font-weight: bold;
+  margin-top: 8px;
+}
+
+#capslock-warning[hidden] {
+  display: none;
+}
+
+#instructions {
+  margin-top: 12px;
+  color: var(--tt-ink-secondary);
+}
+
+.controls-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button {
+  background: var(--tt-accent);
+  color: var(--tt-on-accent);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--tt-accent);
+  border: 1px solid var(--tt-accent);
+}
+
+select,
+input[type="number"] {
+  background: var(--tt-surface);
+  color: var(--tt-ink);
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+#settings-panel {
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--tt-surface);
+  border: 1px solid var(--tt-line);
+  border-radius: 8px;
+}
+
+#settings-panel[hidden] {
+  display: none;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px 24px;
+}
+
+.settings-grid label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.settings-grid input[type="number"] {
+  width: 90px;
+}
+
+footer.app-footer {
+  margin-top: 24px;
+  color: var(--tt-ink-secondary);
+  font-size: 12px;
+}

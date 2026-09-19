@@ -1,0 +1,95 @@
+<!--
+  page.html -- the web front end's document shell. Assembled by the server:
+  GET / serves this file with the literal placeholders {{CSS}} and {{JS}}
+  replaced by the contents of static/page.css and static/page.js (see
+  docs/Contracts.md). Complete on its own otherwise: no CDN links, no
+  external stylesheets or fonts, no network calls other than to this page's
+  own /api/* endpoints.
+
+  Written 2026-09-19 for stage 6 of the TypingTrainer refactor
+  (docs/Refactor_Plan.md).
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TypingTrainer</title>
+  <style>
+{{CSS}}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <h1>TypingTrainer</h1>
+      <span id="text-name">""</span>
+    </header>
+
+    <div class="meta-row">
+      <span id="position-label">0/0 (0.0%)</span>
+      <div id="criteria-display"></div>
+    </div>
+
+    <div id="error-bar" hidden></div>
+
+    <div class="typing-area-wrapper">
+      <div id="typing-area" tabindex="0" aria-label="Typing area">
+        <div id="current-line"></div>
+        <div id="upcoming-lines"></div>
+      </div>
+      <div id="flash" aria-hidden="true"></div>
+    </div>
+
+    <div id="capslock-warning" hidden>&#9888; CAPS LOCK ON</div>
+    <div id="instructions">Press Enter to start.</div>
+
+    <div class="controls-row">
+      <button id="prev-btn" type="button">Prev</button>
+      <button id="next-btn" type="button">Next</button>
+      <select id="text-picker" aria-label="Select text"></select>
+      <button id="add-text-btn" type="button" class="secondary">Add text&hellip;</button>
+      <button id="reset-history-btn" type="button" class="secondary">Reset history</button>
+      <button id="settings-btn" type="button" class="secondary">Settings</button>
+    </div>
+
+    <div id="settings-panel" hidden>
+      <div class="settings-grid">
+        <label>
+          <input type="checkbox" data-setting="require_accuracy" />
+          Require accuracy
+        </label>
+        <label>
+          Min accuracy (%)
+          <input type="number" data-setting="min_accuracy" min="0" max="100" step="1" />
+        </label>
+        <label>
+          <input type="checkbox" data-setting="require_wpm" />
+          Require WPM
+        </label>
+        <label>
+          Min WPM
+          <input type="number" data-setting="min_wpm" min="0" step="1" />
+        </label>
+        <label>
+          <input type="checkbox" data-setting="show_criteria" />
+          Show criteria
+        </label>
+        <label>
+          <input type="checkbox" data-setting="flash_on_mistake" />
+          Flash on mistake
+        </label>
+      </div>
+    </div>
+
+    <footer class="app-footer">
+      Enter: start / submit line &middot; Esc: abandon line &middot; Ctrl+Backspace: delete last
+      word &middot; Backspace: delete a character
+    </footer>
+  </div>
+
+  <script>
+{{JS}}
+  </script>
+</body>
+</html>
