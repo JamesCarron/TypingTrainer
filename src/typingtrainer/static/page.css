@@ -6,18 +6,26 @@
  * raw hex anywhere else.
  *
  * Written 2026-09-19 for stage 6 of the TypingTrainer refactor
- * (docs/Refactor_Plan.md).
+ * (docs/Refactor_Plan.md). Rewritten 2026-09-19 for the Monkeytype-style
+ * typing surface (docs/UI_Refresh_Notes.md, Proposal A):
+ *   - no card around the typing area, flat background
+ *   - inverted colour convention: untyped dim (--tt-sub), correctly typed
+ *     text in the normal foreground, only errors take a colour
+ *   - a real sliding caret
+ *   - chrome (header, controls, footer, instructions) fades while typing
+ *   - a dimmed previous line above the current one
+ *   - small live WPM/accuracy readout, display-only
  */
 
 :root {
   --tt-ink: #1b1f23;
   --tt-ink-secondary: #5b6470;
+  --tt-sub: #9aa2ad;
   --tt-bg: #f5f6f8;
   --tt-surface: #ffffff;
   --tt-line: #d7dbe1;
   --tt-accent: #1f8a8a;
   --tt-on-accent: #ffffff;
-  --tt-correct: #1c8a4b;
   --tt-incorrect: #c62f2f;
 }
 
@@ -25,12 +33,12 @@
   :root:not([data-theme="light"]) {
     --tt-ink: #eaedf1;
     --tt-ink-secondary: #a4acb8;
+    --tt-sub: #565e68;
     --tt-bg: #14171a;
     --tt-surface: #1d2124;
     --tt-line: #333941;
     --tt-accent: #3fb8b8;
     --tt-on-accent: #0c1112;
-    --tt-correct: #4fd07f;
     --tt-incorrect: #ff6b6b;
   }
 }
@@ -38,12 +46,12 @@
 :root[data-theme="dark"] {
   --tt-ink: #eaedf1;
   --tt-ink-secondary: #a4acb8;
+  --tt-sub: #565e68;
   --tt-bg: #14171a;
   --tt-surface: #1d2124;
   --tt-line: #333941;
   --tt-accent: #3fb8b8;
   --tt-on-accent: #0c1112;
-  --tt-correct: #4fd07f;
   --tt-incorrect: #ff6b6b;
 }
 
@@ -69,6 +77,7 @@ header.app-header {
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 8px;
+  transition: opacity 200ms ease;
 }
 
 header.app-header h1 {
@@ -87,6 +96,7 @@ header.app-header h1 {
   gap: 16px;
   margin-bottom: 20px;
   color: var(--tt-ink-secondary);
+  transition: opacity 200ms ease;
 }
 
 #position-label {
@@ -116,32 +126,60 @@ header.app-header h1 {
   display: none;
 }
 
-.typing-area-wrapper {
+/* ---- the typing surface -------------------------------------------------
+ * No card: flat background, generous empty space, text floating on the
+ * page. Chrome around it (header/meta/controls/footer/instructions) carries
+ * .chrome-fade and is faded out by body.typing below.
+ */
+
+.stage {
+  position: relative;
+  max-width: 70ch;
+  margin: 48px auto;
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+.live-stats {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  font-size: 14px;
+  color: var(--tt-sub);
+  letter-spacing: 0.02em;
+}
+
+.live-stats[hidden] {
+  display: none;
+}
+
+.previous-line {
+  font-size: 22px;
+  line-height: 1.6;
+  color: var(--tt-sub);
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.7;
+  margin-bottom: 4px;
+  min-height: 1.6em;
+}
+
+.current-line-wrap {
   position: relative;
 }
 
 #typing-area {
-  background: var(--tt-surface);
-  border: 1px solid var(--tt-line);
-  border-radius: 8px;
-  padding: 20px;
-  font-size: 22px;
-  line-height: 1.6;
-  min-height: 160px;
   outline: none;
 }
 
-#typing-area:focus {
-  border-color: var(--tt-accent);
-}
-
 #current-line {
+  font-size: 30px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .char-correct {
-  color: var(--tt-correct);
+  color: var(--tt-ink);
 }
 
 .char-incorrect {
@@ -149,43 +187,68 @@ header.app-header h1 {
 }
 
 .char-incorrect-space {
-  text-decoration: underline;
+  background: var(--tt-incorrect);
+  border-radius: 2px;
 }
 
 .char-pending {
-  color: var(--tt-ink);
+  color: var(--tt-sub);
+}
+
+.char-flash {
+  background: var(--tt-incorrect);
+  color: var(--tt-on-accent);
+  border-radius: 2px;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+@keyframes tt-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
+#current-line.shake {
+  animation: tt-shake 220ms ease-in-out;
+}
+
+.caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--tt-accent);
+  transition: transform 100ms ease-out;
+  animation: tt-caret-blink 1s step-end infinite;
+}
+
+.caret.solid {
+  animation: none;
+  opacity: 1;
+}
+
+.caret.hidden-caret {
+  display: none;
+}
+
+@keyframes tt-caret-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
 }
 
 #upcoming-lines {
-  color: var(--tt-ink-secondary);
+  color: var(--tt-sub);
   margin-top: 8px;
   white-space: pre-wrap;
 }
 
 .upcoming-line {
+  font-size: 22px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-#flash {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 56px;
-  font-weight: bold;
-  color: var(--tt-incorrect);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 60ms ease-out;
-}
-
-#flash::before {
-  content: "\2717";
-}
-
-#flash.flash-active {
-  opacity: 0.85;
 }
 
 #capslock-warning {
@@ -201,6 +264,7 @@ header.app-header h1 {
 #instructions {
   margin-top: 12px;
   color: var(--tt-ink-secondary);
+  transition: opacity 200ms ease;
 }
 
 .controls-row {
@@ -209,6 +273,17 @@ header.app-header h1 {
   margin-top: 20px;
   align-items: center;
   flex-wrap: wrap;
+  transition: opacity 200ms ease;
+}
+
+/* Chrome that disappears while the player is mid-keystroke on a line
+ * (body.typing, toggled from page.js) and comes back on Esc or when the
+ * line finishes. Kept in the layout (opacity, not display) so nothing
+ * reflows when it returns.
+ */
+body.typing .chrome-fade {
+  opacity: 0;
+  pointer-events: none;
 }
 
 button {
@@ -274,4 +349,5 @@ footer.app-footer {
   margin-top: 24px;
   color: var(--tt-ink-secondary);
   font-size: 12px;
+  transition: opacity 200ms ease;
 }

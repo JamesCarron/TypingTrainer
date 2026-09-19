@@ -50,7 +50,7 @@ One process, one `Session`, bound to `127.0.0.1` on an ephemeral port. Every res
 | `POST /api/text` | `{"name": ...}` | the new snapshot |
 | `POST /api/start` | — | the new snapshot |
 | `POST /api/abort` | — | the new snapshot |
-| `POST /api/attempt` | `{"typed": ..., "duration_ms": ...}` | `{"result": AttemptResult, "state": snapshot}` — **the authoritative score**; the browser's live diff is display only |
+| `POST /api/attempt` | `{"typed", "duration_ms", "typed_full"?, "keystrokes"?}` | `{"result": AttemptResult, "state": snapshot}` — **the authoritative score**; the browser's live diff is display only |
 | `POST /api/position` | `{"delta": n}` or `{"line": n}` | the new snapshot |
 | `GET /api/settings` | — | the six settings |
 | `POST /api/settings` | any subset of the six | the new settings |
@@ -62,4 +62,5 @@ Rules that go with it:
 
 - **The browser never computes a score that is kept.** It computes the live per-character diff for colouring, and that is all. Accuracy, WPM and pass/fail come back from `POST /api/attempt`, and the page renders what the server said even if its own diff disagreed.
 - **The live diff must agree with `scoring.compare_lines` anyway**, and `tests/js/test_diff_parity.py` proves it over `tests/fixtures/diff_corpus.json`. One fixture file, both implementations; two fixture lists would be the same bug as two implementations.
+- **Keystrokes are sent with the attempt, not streamed.** `keystrokes` is a list of `{"char", "ms", "correct"}` in press order, `ms` measured from the first keypress of the line, covering every character key pressed — including characters later deleted, and including ones stop-on-error refused. Backspaces are not entries. The field is optional and malformed lists are rejected rather than coerced, because a wrong number in a latency statistic is worse than no number. Added 2026-09-19; see `docs/UI_Refresh_Notes.md`.
 - **No state in the page that the server does not also hold.** A reload re-reads `GET /api/state` and lands exactly where the player was.

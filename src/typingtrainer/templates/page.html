@@ -7,7 +7,10 @@
   own /api/* endpoints.
 
   Written 2026-09-19 for stage 6 of the TypingTrainer refactor
-  (docs/Refactor_Plan.md).
+  (docs/Refactor_Plan.md). Rewritten 2026-09-19 for the Monkeytype-style
+  typing surface (docs/UI_Refresh_Notes.md, Proposal A): no card, inverted
+  colour convention, a real caret, chrome that fades while typing, a dimmed
+  previous line, live stats, and stop-on-error.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -21,30 +24,37 @@
 </head>
 <body>
   <div class="page">
-    <header class="app-header">
+    <header class="app-header chrome-fade">
       <h1>TypingTrainer</h1>
       <span id="text-name">""</span>
     </header>
 
-    <div class="meta-row">
+    <div class="meta-row chrome-fade">
       <span id="position-label">0/0 (0.0%)</span>
       <div id="criteria-display"></div>
     </div>
 
     <div id="error-bar" hidden></div>
 
-    <div class="typing-area-wrapper">
-      <div id="typing-area" tabindex="0" aria-label="Typing area">
-        <div id="current-line"></div>
-        <div id="upcoming-lines"></div>
+    <div class="stage">
+      <div id="live-stats" class="live-stats" hidden></div>
+
+      <div id="previous-line" class="previous-line"></div>
+
+      <div class="current-line-wrap">
+        <div id="typing-area" tabindex="0" aria-label="Typing area">
+          <div id="current-line"></div>
+        </div>
+        <div id="caret" class="caret" aria-hidden="true"></div>
       </div>
-      <div id="flash" aria-hidden="true"></div>
+
+      <div id="upcoming-lines"></div>
     </div>
 
     <div id="capslock-warning" hidden>&#9888; CAPS LOCK ON</div>
-    <div id="instructions">Press Enter to start.</div>
+    <div id="instructions" class="chrome-fade">Press Enter to start.</div>
 
-    <div class="controls-row">
+    <div class="controls-row chrome-fade">
       <button id="prev-btn" type="button">Prev</button>
       <button id="next-btn" type="button">Next</button>
       <select id="text-picker" aria-label="Select text"></select>
@@ -79,10 +89,18 @@
           <input type="checkbox" data-setting="flash_on_mistake" />
           Flash on mistake
         </label>
+        <label>
+          <input type="checkbox" data-setting="stop_on_error" />
+          Stop on error
+        </label>
+        <label>
+          <input type="checkbox" data-setting="live_stats" />
+          Live stats
+        </label>
       </div>
     </div>
 
-    <footer class="app-footer">
+    <footer class="app-footer chrome-fade">
       Enter: start / submit line &middot; Esc: abandon line &middot; Ctrl+Backspace: delete last
       word &middot; Backspace: delete a character
     </footer>

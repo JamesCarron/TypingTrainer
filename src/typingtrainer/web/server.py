@@ -120,11 +120,53 @@ def _api_attempt(body, session: Session):
         duration = float(duration_ms) / 1000.0
     except (TypeError, ValueError) as exc:
         raise ApiError(400, "duration_ms must be a number") from exc
+    keystrokes = _clean_keystrokes(body.get("keystrokes"))
+    typed_full = body.get("typed_full")
+    if typed_full is not None and not isinstance(typed_full, str):
+        raise ApiError(400, "typed_full must be a string")
     try:
-        result = session.submit_line(typed, duration)
+        result = session.submit_line(
+            typed, duration, typed_full=typed_full, keystrokes=keystrokes
+        )
     except RuntimeError as exc:
         raise ApiError(409, str(exc)) from exc
     return {"result": result.as_dict(), "state": session.snapshot()}
+
+
+def _clean_keystrokes(raw):
+    """Validate the per-keystroke record the page sends with an attempt.
+
+    Rejected rather than coerced: a malformed timing list would quietly poison
+    every latency statistic downstream, and a wrong number there is worse than
+    no number. Absent is fine — attempts from before the instrumentation, and
+    from any view that cannot capture it, simply have none.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ApiError(400, "keystrokes must be a list")
+    if len(raw) > 10000:
+        raise ApiError(400, "keystrokes: too many entries for one line")
+    cleaned = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ApiError(400, "keystrokes: each entry must be an object")
+        char = entry.get("char")
+        if not isinstance(char, str) or len(char) > 8:
+            raise ApiError(400, "keystrokes: char must be a short string")
+        try:
+            ms = float(entry.get("ms", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, "keystrokes: ms must be a number") from exc
+        correct = entry.get("correct")
+        cleaned.append(
+            {
+                "char": char,
+                "ms": ms,
+                "correct": None if correct is None else bool(correct),
+            }
+        )
+    return cleaned
 
 
 def _api_position(body, session: Session):

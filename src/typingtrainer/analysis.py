@@ -1,0 +1,822 @@
+"""analysis.py -- pure post-session analysis over the attempt store.
+
+Written 2026-09-19 for the "analysis engine" stream of the UI refresh
+(docs/UI_Refresh_Notes.md, Proposal C). Every function here is a pure function
+of the ``(key, record)`` pairs ``history.iter_attempts`` returns, or the
+``(key, record, keystrokes)`` triples ``history.iter_keystroke_attempts``
+returns -- except ``full_report``, which is the only function that touches the
+store. No UI, no HTTP, no printing, standard library only.
+
+Alignment used everywhere a target line is compared against what was typed is
+the same **positional** alignment as ``scoring.compare_lines``: characters are
+compared index by index (``itertools.zip_longest``-style), not by edit
+distance. This is deliberate -- it is the scoring semantics the rest of the
+app already uses -- but it has a known failure mode: a single inserted or
+deleted character shifts every character after it by one position, so a
+one-character typo can look like a whole tail of the line being wrong. Where
+that would silently inflate a count, the affected functions skip records
+whose length differs too much from the target and report how many they
+skipped (``skipped_length_mismatch``), rather than pretending the alignment is
+sound for every record.
+
+Old records are messy (see CLAUDE.md and docs/UI_Refresh_Notes.md): three have
+no "Length" (this module never reads that field -- ``len(Answer)`` is used
+instead, which sidesteps the problem entirely), some have an unformatted
+``EventTime`` (the literal unsubstituted f-string from a pre-refactor bug),
+some have no "Passed", and none have keystrokes. Every function here parses
+defensively and counts what it could not use rather than raising or silently
+dropping it -- look for a ``skipped_*`` key in each function's return value.
+
+Verified by tests/test_analysis.py.
+"""
+
+from __future__ import annotations
+
+import statistics
+from collections import Counter, defaultdict
+from datetime import date, datetime
+from itertools import zip_longest
+
+from . import history
+
+# ---------------------------------------------------------------------------
+# shared helpers
+# ---------------------------------------------------------------------------
+
+#: How much an attempt's length may differ from its target line before the
+#: positional alignment is considered too unreliable to use. A couple of
+#: characters (one inserted/deleted character plus slack) is the brief's own
+#: suggestion.
+_MAX_LEN_DIFF = 2
+
+_QUOTE_CHARS = set("'\"`‘’“”")
+_SPACE_CHARS = set(" \t")
+
+
+def _classify_char(ch: str) -> str:
+    """Bucket one character for the error-category breakdown.
+
+    Buckets: lower, upper, digit, space, quote (quotes and apostrophes,
+    checked before punctuation since an apostrophe is also punctuation),
+    punct (everything else non-alphanumeric), other (anything not covered,
+    e.g. non-ASCII letters -- kept so nothing is silently dropped).
+    """
+    if ch in _SPACE_CHARS:
+        return "space"
+    if ch in _QUOTE_CHARS:
+        return "quote"
+    if ch.isdigit():
+        return "digit"
+    if ch.isalpha():
+        return "upper" if ch.isupper() else "lower"
+    if not ch.isalnum():
+        return "punct"
+    return "other"
+
+
+def _answer_and_input(record: dict) -> tuple[str, str] | None:
+    """Pull (Answer, user_input) out of a record, or None if either is absent."""
+    answer = record.get("Answer")
+    typed = record.get("user_input")
+    if answer is None or typed is None:
+        return None
+    return answer, typed
+
+
+def _aligned_pairs(answer: str, typed: str):
+    """Yield (target_char_or_None, typed_char_or_None) pairs, positionally."""
+    return zip_longest(answer, typed, fillvalue=None)
+
+
+def _usable_for_alignment(answer: str, typed: str, max_len_diff: int = _MAX_LEN_DIFF) -> bool:
+    return abs(len(answer) - len(typed)) <= max_len_diff
+
+
+def _parse_event_time(value) -> datetime | None:
+    """Parse the ``EventTime`` field, defensively.
+
+    New records store ``"%d-%m-%Y %H:%M:%S"``. Some legacy records carry the
+    literal, never-substituted f-string ``"{self.time_start:%d-%m-%Y
+    %H:%M:%S}"`` from a pre-refactor bug -- that and anything else unparsable
+    returns None rather than raising.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%d-%m-%Y %H:%M:%S")
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _round(x, nd=3):
+    return round(x, nd) if x is not None else None
+
+
+def _mean(values):
+    return statistics.fmean(values) if values else None
+
+
+def _median(values):
+    return statistics.median(values) if values else None
+
+
+def _keystroke_deltas(keystrokes: list) -> list:
+    """(prev_char, char, delta_ms) for consecutive keystrokes in one attempt.
+
+    ``ms`` on each keystroke is measured from the first keypress of the line
+    (cumulative), not a per-key delta, so the gap that actually matters --
+    time since the *previous* key -- is computed here. The first keystroke of
+    a line has no previous key to compare to and is excluded.
+    """
+    out = []
+    for prev, cur in zip(keystrokes, keystrokes[1:]):
+        if prev.get("ms") is None or cur.get("ms") is None:
+            continue
+        delta = cur["ms"] - prev["ms"]
+        if delta < 0:
+            continue  # malformed/out-of-order timing; not trustworthy
+        out.append((prev.get("char"), cur.get("char"), delta))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 1. WEAK POINTS
+# ---------------------------------------------------------------------------
+
+
+def confusion_pairs(attempts: list, max_len_diff: int = _MAX_LEN_DIFF) -> dict:
+    """Rank (intended, typed) character substitutions: "you type r for e, 14 times".
+
+    Aligns each record's Answer against its user_input positionally (see
+    module docstring) and counts every position where they differ and both
+    sides have a character. Records without Answer/user_input, or whose
+    length differs from the target by more than ``max_len_diff``, are
+    skipped and counted separately, because a length mismatch shifts the
+    whole tail of the line and would otherwise inflate every pair count
+    after the first insertion/deletion.
+    """
+    counts: Counter = Counter()
+    skipped_missing = 0
+    skipped_length = 0
+    considered = 0
+    for _key, record in attempts:
+        pair = _answer_and_input(record)
+        if pair is None:
+            skipped_missing += 1
+            continue
+        answer, typed = pair
+        if not _usable_for_alignment(answer, typed, max_len_diff):
+            skipped_length += 1
+            continue
+        considered += 1
+        for a, t in _aligned_pairs(answer, typed):
+            if a is None or t is None:
+                continue
+            if a != t:
+                counts[(a, t)] += 1
+    ranked = [
+        {"intended": a, "typed": t, "count": n}
+        for (a, t), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return {
+        "pairs": ranked,
+        "attempts_considered": considered,
+        "skipped_missing_fields": skipped_missing,
+        "skipped_length_mismatch": skipped_length,
+    }
+
+
+def character_error_rates(attempts: list, max_len_diff: int = _MAX_LEN_DIFF) -> dict:
+    """Per target character: times seen, times mistyped, error rate.
+
+    Feeds the keyboard heatmap. Uses the same positional alignment and the
+    same length-mismatch skip as ``confusion_pairs``, for the same reason.
+    """
+    seen: Counter = Counter()
+    wrong: Counter = Counter()
+    skipped_missing = 0
+    skipped_length = 0
+    considered = 0
+    for _key, record in attempts:
+        pair = _answer_and_input(record)
+        if pair is None:
+            skipped_missing += 1
+            continue
+        answer, typed = pair
+        if not _usable_for_alignment(answer, typed, max_len_diff):
+            skipped_length += 1
+            continue
+        considered += 1
+        for i, a in enumerate(answer):
+            seen[a] += 1
+            t = typed[i] if i < len(typed) else None
+            if t != a:
+                wrong[a] += 1
+    rows = [
+        {
+            "char": ch,
+            "seen": n,
+            "mistyped": wrong.get(ch, 0),
+            "error_rate": _round(wrong.get(ch, 0) / n) if n else 0.0,
+        }
+        for ch, n in seen.items()
+    ]
+    rows.sort(key=lambda r: (-r["error_rate"], -r["seen"]))
+    return {
+        "characters": rows,
+        "attempts_considered": considered,
+        "skipped_missing_fields": skipped_missing,
+        "skipped_length_mismatch": skipped_length,
+    }
+
+
+def problem_words(attempts: list, max_len_diff: int = _MAX_LEN_DIFF, top_n: int = 50) -> dict:
+    """Which words in the book get mistyped most, with an example mistake.
+
+    A "word" is a whitespace-separated run of the target line. Because the
+    alignment is positional, a word is judged mistyped if the substring of
+    user_input at the same character offsets differs from it -- so this
+    shares the same length-mismatch skip and the same limitation as
+    ``confusion_pairs``.
+    """
+    counts: Counter = Counter()
+    examples: dict[str, str] = {}
+    skipped_missing = 0
+    skipped_length = 0
+    considered = 0
+    for _key, record in attempts:
+        pair = _answer_and_input(record)
+        if pair is None:
+            skipped_missing += 1
+            continue
+        answer, typed = pair
+        if not _usable_for_alignment(answer, typed, max_len_diff):
+            skipped_length += 1
+            continue
+        considered += 1
+        offset = 0
+        for word in answer.split(" "):
+            start, end = offset, offset + len(word)
+            offset = end + 1  # + the space we split on
+            if not word:
+                continue
+            typed_slice = typed[start:end]
+            if typed_slice != word:
+                counts[word] += 1
+                examples.setdefault(word, typed_slice if typed_slice else "(nothing typed)")
+    ranked = [
+        {"word": w, "count": n, "example_typed": examples.get(w, "")}
+        for w, n in counts.most_common(top_n)
+    ]
+    return {
+        "words": ranked,
+        "attempts_considered": considered,
+        "skipped_missing_fields": skipped_missing,
+        "skipped_length_mismatch": skipped_length,
+    }
+
+
+def error_categories(attempts: list, max_len_diff: int = _MAX_LEN_DIFF) -> dict:
+    """Error rate split by character class: lower/upper/digit/quote/punct/space.
+
+    Answers the "fine on letters but loses every line on semicolons" question.
+    Same alignment and skip rule as the other weak-point functions.
+    """
+    seen: Counter = Counter()
+    wrong: Counter = Counter()
+    skipped_missing = 0
+    skipped_length = 0
+    considered = 0
+    for _key, record in attempts:
+        pair = _answer_and_input(record)
+        if pair is None:
+            skipped_missing += 1
+            continue
+        answer, typed = pair
+        if not _usable_for_alignment(answer, typed, max_len_diff):
+            skipped_length += 1
+            continue
+        considered += 1
+        for i, a in enumerate(answer):
+            cat = _classify_char(a)
+            seen[cat] += 1
+            t = typed[i] if i < len(typed) else None
+            if t != a:
+                wrong[cat] += 1
+    categories = ["lower", "upper", "digit", "quote", "punct", "space", "other"]
+    rows = [
+        {
+            "category": cat,
+            "seen": seen.get(cat, 0),
+            "mistyped": wrong.get(cat, 0),
+            "error_rate": _round(wrong.get(cat, 0) / seen[cat]) if seen.get(cat) else 0.0,
+        }
+        for cat in categories
+        if seen.get(cat, 0) > 0
+    ]
+    rows.sort(key=lambda r: -r["error_rate"])
+    return {
+        "categories": rows,
+        "attempts_considered": considered,
+        "skipped_missing_fields": skipped_missing,
+        "skipped_length_mismatch": skipped_length,
+    }
+
+
+def correction_rate(attempts: list) -> dict:
+    """How much was typed and thrown away, from user_input_full vs user_input.
+
+    ``user_input_full`` holds every character typed, including ones later
+    deleted; ``user_input`` is what was finally submitted. The excess length
+    of the full field over the submitted one is used as a proxy for
+    "characters typed then backspaced" -- it undercounts when a backspace was
+    immediately followed by retyping the *same* character (the lengths can
+    still work out close), but it needs no keystroke data, which is the
+    point of this function. Records with no ``user_input_full`` (every
+    pre-instrumentation record duplicates it from user_input, but a record
+    missing the field entirely is skipped) are counted separately.
+    """
+    per_attempt = []
+    skipped_missing = 0
+    total_extra = 0
+    total_full = 0
+    for key, record in attempts:
+        full = record.get("user_input_full")
+        submitted = record.get("user_input")
+        if full is None or submitted is None:
+            skipped_missing += 1
+            continue
+        extra = max(0, len(full) - len(submitted))
+        rate = extra / len(full) if len(full) else 0.0
+        per_attempt.append({"key": key, "extra_chars": extra, "correction_rate": _round(rate)})
+        total_extra += extra
+        total_full += len(full)
+    overall = _round(total_extra / total_full) if total_full else 0.0
+    return {
+        "overall_correction_rate": overall,
+        "total_extra_chars": total_extra,
+        "per_attempt": per_attempt,
+        "attempts_considered": len(per_attempt),
+        "skipped_missing_fields": skipped_missing,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 2. SPEED (needs keystroke timing; degrades gracefully without it)
+# ---------------------------------------------------------------------------
+
+
+def key_latencies(instrumented: list) -> dict:
+    """Per character: count, mean and median ms since the previous keystroke.
+
+    Ranked slowest (by mean) first. The first keystroke of every line is
+    excluded -- there is no previous key in that line to measure a gap from.
+    """
+    by_char: dict[str, list] = defaultdict(list)
+    for _key, _record, keystrokes in instrumented:
+        for _prev_char, char, delta in _keystroke_deltas(keystrokes):
+            if char is not None:
+                by_char[char].append(delta)
+    rows = [
+        {
+            "char": ch,
+            "count": len(deltas),
+            "mean_ms": _round(_mean(deltas), 1),
+            "median_ms": _round(_median(deltas), 1),
+        }
+        for ch, deltas in by_char.items()
+    ]
+    rows.sort(key=lambda r: -r["mean_ms"])
+    return {"keys": rows, "instrumented_attempts": len(instrumented)}
+
+
+def bigram_latencies(instrumented: list, min_occurrences: int = 5) -> dict:
+    """Per (previous char, char) transition: count, mean and median ms.
+
+    Ranked slowest first, with ``min_occurrences`` as a floor so a single
+    slow outlier cannot top the list. This is the headline speed output --
+    the brief's "your personal slow transitions are what cost you".
+    """
+    by_pair: dict[tuple, list] = defaultdict(list)
+    for _key, _record, keystrokes in instrumented:
+        for prev_char, char, delta in _keystroke_deltas(keystrokes):
+            if prev_char is not None and char is not None:
+                by_pair[(prev_char, char)].append(delta)
+    rows = [
+        {
+            "prev": p,
+            "char": c,
+            "count": len(deltas),
+            "mean_ms": _round(_mean(deltas), 1),
+            "median_ms": _round(_median(deltas), 1),
+        }
+        for (p, c), deltas in by_pair.items()
+        if len(deltas) >= min_occurrences
+    ]
+    rows.sort(key=lambda r: -r["mean_ms"])
+    return {
+        "bigrams": rows,
+        "min_occurrences": min_occurrences,
+        "instrumented_attempts": len(instrumented),
+    }
+
+
+#: Standard touch-typing home-row finger assignment for a QWERTY layout.
+#: Left hand fingers 1-4 = pinky..index, right hand 5-8 = index..pinky.
+#: Thumbs (space) are their own bucket. This is the conventional 10-finger
+#: touch-typing chart, not derived from any user's actual data, and it
+#: assumes QWERTY -- it will misclassify every key on any other layout.
+QWERTY_FINGER_MAP: dict[str, str] = {
+    **{c: "L-pinky" for c in "q a z 1 ! Q A Z".split()},
+    **{c: "L-ring" for c in "w s x 2 @ W S X".split()},
+    **{c: "L-middle" for c in "e d c 3 # E D C".split()},
+    **{c: "L-index" for c in "r f v t g b 4 5 $ % R F V T G B".split()},
+    **{c: "R-index" for c in "y h n u j m 6 7 ^ & Y H N U J M".split()},
+    **{c: "R-middle" for c in "i k , 8 * I K".split()},
+    **{c: "R-ring" for c in "o l . 9 ( O L".split()},
+    **{c: "R-pinky" for c in "p ; / 0 ) - _ = + [ ] { } \\ | ' \" P".split()},
+    " ": "thumb",
+}
+
+
+def _finger_for(ch: str | None) -> str | None:
+    if ch is None:
+        return None
+    return QWERTY_FINGER_MAP.get(ch)
+
+
+def same_finger_bigrams(instrumented: list, min_occurrences: int = 5) -> dict:
+    """Transitions between two different keys typed with the same QWERTY finger.
+
+    These are the mechanically slow transitions -- a lateral reach without
+    the other fingers to help. Repeated *same* key ("ll") is excluded on
+    purpose: that is a different phenomenon (a key repeat, usually fast),
+    not the same-finger-different-key reach this is meant to surface.
+    Requires a keyboard-position finger map (``QWERTY_FINGER_MAP`` above,
+    the standard home-row assignment), so it assumes QWERTY and cannot
+    classify characters outside that map (digits/symbols on some layouts,
+    or anything typed with a modifier this map does not know about).
+    """
+    same_finger: dict[tuple, list] = defaultdict(list)
+    all_deltas = []
+    for _key, _record, keystrokes in instrumented:
+        for prev_char, char, delta in _keystroke_deltas(keystrokes):
+            if prev_char is None or char is None:
+                continue
+            all_deltas.append(delta)
+            if prev_char == char:
+                continue
+            f1, f2 = _finger_for(prev_char), _finger_for(char)
+            if f1 is not None and f1 == f2:
+                same_finger[(prev_char, char)].append(delta)
+    rows = [
+        {
+            "prev": p,
+            "char": c,
+            "finger": _finger_for(p),
+            "count": len(deltas),
+            "mean_ms": _round(_mean(deltas), 1),
+            "median_ms": _round(_median(deltas), 1),
+        }
+        for (p, c), deltas in same_finger.items()
+        if len(deltas) >= min_occurrences
+    ]
+    rows.sort(key=lambda r: -r["mean_ms"])
+    same_finger_all = [d for deltas in same_finger.values() for d in deltas]
+    return {
+        "pairs": rows,
+        "min_occurrences": min_occurrences,
+        "same_finger_mean_ms": _round(_mean(same_finger_all), 1),
+        "all_bigrams_mean_ms": _round(_mean(all_deltas), 1),
+        "instrumented_attempts": len(instrumented),
+    }
+
+
+def rhythm(instrumented: list, stall_ms: float = 500.0) -> dict:
+    """Consistency of typing rhythm: mean/stdev of inter-key gaps, and stalls.
+
+    A stall is any inter-key gap over ``stall_ms``; both the count and the
+    (attempt key, position, char) of each are returned, since where you
+    hesitate in a line is itself a finding, not just how often.
+    """
+    all_deltas = []
+    per_attempt = []
+    stalls = []
+    for key, _record, keystrokes in instrumented:
+        deltas = [d for _p, _c, d in _keystroke_deltas(keystrokes)]
+        all_deltas.extend(deltas)
+        attempt_stdev = statistics.pstdev(deltas) if len(deltas) >= 2 else 0.0
+        per_attempt.append(
+            {
+                "key": key,
+                "mean_ms": _round(_mean(deltas), 1),
+                "stdev_ms": _round(attempt_stdev, 1),
+                "n_keys": len(deltas),
+            }
+        )
+        for i, (_prev_char, char, delta) in enumerate(_keystroke_deltas(keystrokes)):
+            if delta > stall_ms:
+                stalls.append({"key": key, "position": i + 1, "char": char, "gap_ms": _round(delta, 1)})
+    return {
+        "mean_ms": _round(_mean(all_deltas), 1),
+        "stdev_ms": _round(statistics.pstdev(all_deltas), 1) if len(all_deltas) >= 2 else 0.0,
+        "stall_threshold_ms": stall_ms,
+        "stall_count": len(stalls),
+        "stalls": stalls,
+        "per_attempt": per_attempt,
+        "instrumented_attempts": len(instrumented),
+    }
+
+
+def error_timing(instrumented: list) -> dict:
+    """Are wrong keystrokes preceded by a longer-than-usual gap?
+
+    Compares the mean gap before an incorrect keystroke to the mean gap
+    before a correct one. A gap noticeably longer before errors than before
+    correct keys suggests "does not know the key" (hesitating and still
+    getting it wrong); gaps about the same suggests "going too fast" instead
+    (the error is not preceded by any extra thinking time). Keystrokes whose
+    ``correct`` flag is None (not recorded) are excluded from both sides.
+    """
+    before_error = []
+    before_correct = []
+    for _key, _record, keystrokes in instrumented:
+        for prev, cur in zip(keystrokes, keystrokes[1:]):
+            if prev.get("ms") is None or cur.get("ms") is None:
+                continue
+            delta = cur["ms"] - prev["ms"]
+            if delta < 0:
+                continue
+            correct = cur.get("correct")
+            if correct is True:
+                before_correct.append(delta)
+            elif correct is False:
+                before_error.append(delta)
+    mean_error = _mean(before_error)
+    mean_correct = _mean(before_correct)
+    if mean_error is None or mean_correct is None:
+        interpretation = "insufficient data"
+    elif mean_error > mean_correct * 1.15:
+        interpretation = "errors follow longer pauses: looks like unfamiliarity with the key"
+    elif mean_error < mean_correct * 0.85:
+        interpretation = "errors follow shorter pauses: looks like going too fast"
+    else:
+        interpretation = "no clear difference: gap before errors is about the same as before correct keys"
+    return {
+        "mean_gap_before_error_ms": _round(mean_error, 1),
+        "mean_gap_before_correct_ms": _round(mean_correct, 1),
+        "n_errors_with_timing": len(before_error),
+        "n_correct_with_timing": len(before_correct),
+        "interpretation": interpretation,
+        "instrumented_attempts": len(instrumented),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 3. PROGRESS
+# ---------------------------------------------------------------------------
+
+
+def learning_curve(attempts: list, window: int = 10) -> dict:
+    """WPM and accuracy per attempt over time, plus a rolling mean, for charting.
+
+    ``attempts`` is trusted to already be oldest-first, matching
+    ``history.iter_attempts``'s contract; this does not re-sort by
+    ``EventTime`` (some of which cannot even be parsed -- see module
+    docstring). Attempts missing Wpm or Accuracy are skipped and counted.
+    """
+    points = []
+    skipped = 0
+    wpm_window: list = []
+    acc_window: list = []
+    for key, record in attempts:
+        wpm = record.get("Wpm")
+        acc = record.get("Accuracy")
+        if wpm is None or acc is None:
+            skipped += 1
+            continue
+        wpm_window.append(wpm)
+        acc_window.append(acc)
+        if len(wpm_window) > window:
+            wpm_window.pop(0)
+        if len(acc_window) > window:
+            acc_window.pop(0)
+        points.append(
+            {
+                "key": key,
+                "wpm": wpm,
+                "accuracy": acc,
+                "rolling_mean_wpm": _round(_mean(wpm_window), 2),
+                "rolling_mean_accuracy": _round(_mean(acc_window), 4),
+            }
+        )
+    return {"points": points, "window": window, "skipped_missing_fields": skipped}
+
+
+def attempts_per_line(attempts: list) -> dict:
+    """How many attempts each line of the book took; identifies the walls.
+
+    Lines are identified by their target text (``Answer``), not by
+    ``LineIndex``, so a re-numbering of the book (or a legacy record that
+    never carried an index) does not fragment the count. Records with no
+    ``Answer`` are skipped and counted.
+    """
+    counts: Counter = Counter()
+    passed_counts: Counter = Counter()
+    skipped = 0
+    for _key, record in attempts:
+        answer = record.get("Answer")
+        if answer is None:
+            skipped += 1
+            continue
+        counts[answer] += 1
+        if record.get("Passed"):
+            passed_counts[answer] += 1
+    rows = [
+        {
+            "line": line,
+            "attempts": n,
+            "passed": passed_counts.get(line, 0),
+        }
+        for line, n in counts.items()
+    ]
+    rows.sort(key=lambda r: -r["attempts"])
+    return {"lines": rows, "skipped_missing_fields": skipped}
+
+
+def daily_activity(attempts: list) -> dict:
+    """Attempts, time typing and mean WPM per calendar day, for a practice calendar.
+
+    Days come from parsing ``EventTime`` (see ``_parse_event_time``); records
+    whose EventTime cannot be parsed are skipped and counted, not guessed at.
+    """
+    by_day: dict[str, dict] = defaultdict(lambda: {"attempts": 0, "duration": 0.0, "wpms": []})
+    skipped = 0
+    for _key, record in attempts:
+        when = _parse_event_time(record.get("EventTime"))
+        if when is None:
+            skipped += 1
+            continue
+        day = when.date().isoformat()
+        bucket = by_day[day]
+        bucket["attempts"] += 1
+        bucket["duration"] += record.get("Duration") or 0.0
+        if record.get("Wpm") is not None:
+            bucket["wpms"].append(record["Wpm"])
+    days = [
+        {
+            "date": day,
+            "attempts": b["attempts"],
+            "duration_s": _round(b["duration"], 1),
+            "mean_wpm": _round(_mean(b["wpms"]), 2),
+        }
+        for day, b in sorted(by_day.items())
+    ]
+    return {"days": days, "skipped_unparsable_event_time": skipped}
+
+
+def session_summary(attempts: list) -> dict:
+    """Summary tiles for one session's worth of attempts.
+
+    ``attempts`` is the whole session: the caller either passes a
+    time-bounded slice of ``iter_attempts`` (e.g. everything since the app
+    was last opened) or groups by a gap threshold itself -- this function
+    makes no assumption about how the slice was chosen and simply summarises
+    whatever list it is given, in the order given.
+    """
+    lines_completed = 0
+    passed = 0
+    failed = 0
+    duration = 0.0
+    wpms = []
+    accuracies = []
+    scored_lines = []
+    for key, record in attempts:
+        if record.get("Answer") is None:
+            continue
+        lines_completed += 1
+        duration += record.get("Duration") or 0.0
+        if record.get("Passed") is True:
+            passed += 1
+        elif record.get("Passed") is False:
+            failed += 1
+        wpm = record.get("Wpm")
+        if wpm is not None:
+            wpms.append(wpm)
+            scored_lines.append({"key": key, "line": record.get("Answer"), "wpm": wpm})
+        if record.get("Accuracy") is not None:
+            accuracies.append(record["Accuracy"])
+    best = max(scored_lines, key=lambda r: r["wpm"], default=None)
+    worst = min(scored_lines, key=lambda r: r["wpm"], default=None)
+    return {
+        "lines_completed": lines_completed,
+        "passed": passed,
+        "failed": failed,
+        "duration_s": _round(duration, 1),
+        "mean_wpm": _round(_mean(wpms), 2),
+        "best_wpm": _round(max(wpms), 2) if wpms else None,
+        "mean_accuracy": _round(_mean(accuracies), 4),
+        "best_line": best,
+        "worst_line": worst,
+    }
+
+
+def overall_stats(attempts: list, today: date | None = None) -> dict:
+    """All-time tiles: totals, top/mean WPM and accuracy, current/longest streak.
+
+    Streaks are computed from calendar days with at least one attempt (via
+    ``daily_activity``). ``today`` defaults to ``date.today()`` and is only
+    used to decide whether the most recent active day still counts as an
+    unbroken "current" streak (an idle day breaks it); pass it explicitly in
+    tests instead of relying on the wall clock.
+    """
+    today = today or date.today()
+    wpms = [r.get("Wpm") for _k, r in attempts if r.get("Wpm") is not None]
+    accuracies = [r.get("Accuracy") for _k, r in attempts if r.get("Accuracy") is not None]
+    total_duration = sum(r.get("Duration") or 0.0 for _k, r in attempts)
+
+    days_info = daily_activity(attempts)
+    active_days = sorted(date.fromisoformat(d["date"]) for d in days_info["days"])
+    longest = current = 0
+    if active_days:
+        longest = 1
+        run = 1
+        for prev, cur in zip(active_days, active_days[1:]):
+            if (cur - prev).days == 1:
+                run += 1
+            else:
+                run = 1
+            longest = max(longest, run)
+        # current streak: walk back from the most recent active day, but only
+        # if that day is today or yesterday -- otherwise the streak is over.
+        last_active = active_days[-1]
+        if (today - last_active).days <= 1:
+            current = 1
+            for i in range(len(active_days) - 1, 0, -1):
+                if (active_days[i] - active_days[i - 1]).days == 1:
+                    current += 1
+                else:
+                    break
+
+    return {
+        "total_attempts": len(attempts),
+        "total_duration_s": _round(total_duration, 1),
+        "top_wpm": _round(max(wpms), 2) if wpms else None,
+        "mean_wpm": _round(_mean(wpms), 2),
+        "top_accuracy": _round(max(accuracies), 4) if accuracies else None,
+        "mean_accuracy": _round(_mean(accuracies), 4),
+        "current_streak_days": current,
+        "longest_streak_days": longest,
+        "active_days": len(active_days),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 4. ENTRY POINT
+# ---------------------------------------------------------------------------
+
+
+def full_report(text_name: str | None = None) -> dict:
+    """Read the store and run every analysis, as one JSON-serialisable dict.
+
+    The only function in this module that touches ``history``. Everything it
+    returns is JSON-safe (plain str/int/float/bool/None/list/dict -- no
+    datetime objects, no Counter, no numpy), so it can go straight to
+    ``json.dumps`` for ``GET /api/analysis``.
+    """
+    attempts = history.iter_attempts(text_name=text_name)
+    instrumented = history.iter_keystroke_attempts(text_name=text_name)
+
+    report = {
+        "data_coverage": {
+            "text_name": text_name,
+            "total_attempts": len(attempts),
+            "instrumented_attempts": len(instrumented),
+        },
+        "weak_points": {
+            "confusion_pairs": confusion_pairs(attempts),
+            "character_error_rates": character_error_rates(attempts),
+            "problem_words": problem_words(attempts),
+            "error_categories": error_categories(attempts),
+            "correction_rate": correction_rate(attempts),
+        },
+        "speed": {
+            "key_latencies": key_latencies(instrumented),
+            "bigram_latencies": bigram_latencies(instrumented),
+            "same_finger_bigrams": same_finger_bigrams(instrumented),
+            "rhythm": rhythm(instrumented),
+            "error_timing": error_timing(instrumented),
+        },
+        "progress": {
+            "learning_curve": learning_curve(attempts),
+            "attempts_per_line": attempts_per_line(attempts),
+            "daily_activity": daily_activity(attempts),
+            "session_summary": session_summary(attempts),
+            "overall_stats": overall_stats(attempts),
+        },
+    }
+    return report

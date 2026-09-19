@@ -5,6 +5,9 @@
  *
  * Written 2026-09-19 for stage 6 of the TypingTrainer refactor
  * (docs/Refactor_Plan.md), against the API published in docs/Contracts.md.
+ * Rewritten 2026-09-19 for the Monkeytype-style typing surface
+ * (docs/UI_Refresh_Notes.md, Proposal A): a real caret, chrome that fades
+ * while typing, a dimmed previous line, live WPM/accuracy, and stop-on-error.
  *
  * `diff()` below must have exactly the semantics of
  * `typingtrainer.scoring.compare_lines`: itertools.zip_longest(guess, answer,
@@ -83,8 +86,27 @@ if (typeof window !== "undefined") {
 
     let snapshot = null; // last GET /api/state (or equivalent) response
     let typed = ""; // what the player has typed on the current line, minus deletions
-    let typedFull = ""; // raw keystroke record including deleted characters
-    let lineStart = null; // Date.now() of the first keystroke on this line
+
+    // Per-keystroke instrumentation (docs/UI_Refresh_Notes.md, Proposal C):
+    // every character key pressed, in press order, including ones later
+    // deleted and ones rejected by stop-on-error. Backspaces are never
+    // recorded here and never remove an entry. `lineStart` is the timing
+    // baseline for both this list's `ms` field and the submitted
+    // `duration_ms` -- mirrors desktop/app.py's single `time_start`, reset
+    // whenever the buffer empties out so idle "thinking" time before typing
+    // (or re-typing after backspacing everything) is not counted.
+    let keystrokes = [];
+    let lineStart = null;
+
+    let isTyping = false; // true from the first keystroke of the current line
+    let idleTimer = null; // clears the caret's "solid while typing" state
+    let liveStatsTimer = null; // ticks the live WPM readout while idle-typing
+    let flashTimer = null; // clears a transient char-flash / shake
+
+    let lastPosition = null; // for showing the previous line, best-effort
+    let lastTargetLine = null;
+    let previousLineText = null;
+    let flashIndex = null; // index in the current line to show a char-flash
 
     const els = {};
 
@@ -97,8 +119,10 @@ if (typeof window !== "undefined") {
     async function init() {
       els.typingArea = $("typing-area");
       els.currentLine = $("current-line");
+      els.previousLine = $("previous-line");
       els.upcomingLines = $("upcoming-lines");
-      els.flash = $("flash");
+      els.caret = $("caret");
+      els.liveStats = $("live-stats");
       els.capslock = $("capslock-warning");
       els.instructions = $("instructions");
       els.textName = $("text-name");
@@ -124,6 +148,8 @@ if (typeof window !== "undefined") {
       for (const input of document.querySelectorAll("[data-setting]")) {
         input.addEventListener("change", onSettingChanged);
       }
+
+      window.addEventListener("resize", positionCaret);
 
       document.addEventListener("keydown", onKeyDown);
       document.addEventListener("click", (event) => {
@@ -155,7 +181,19 @@ if (typeof window !== "undefined") {
       els.errorBar.textContent = "";
     }
 
+    function setTyping(value) {
+      isTyping = value;
+      document.body.classList.toggle("typing", value);
+      if (!value) {
+        stopLiveStatsTicker();
+      }
+    }
+
     // ---- rendering ------------------------------------------------------------
+
+    function currentTarget() {
+      return (snapshot && snapshot.visible_lines && snapshot.visible_lines[0]) || "";
+    }
 
     function render() {
       if (!snapshot) return;
@@ -164,10 +202,30 @@ if (typeof window !== "undefined") {
       const pct = (snapshot.progress * 100).toFixed(1);
       els.positionLabel.textContent = `${snapshot.position}/${snapshot.line_count} (${pct}%)`;
 
+      // Best-effort "previous line": only known when this snapshot is one
+      // line further on than the last one we rendered (the normal forward
+      // flow of typing through the book). A jump, a text switch or a manual
+      // reposition simply has no previous line to show -- Session does not
+      // expose one, and this view may not invent state the engine does not
+      // hold (docs/Contracts.md: "no state in the page the server does not
+      // also hold" -- this is display-only best effort, never submitted).
+      const target = currentTarget();
+      if (lastPosition !== null) {
+        if (snapshot.position === lastPosition + 1) {
+          previousLineText = lastTargetLine;
+        } else if (snapshot.position !== lastPosition) {
+          previousLineText = null;
+        }
+      }
+      lastPosition = snapshot.position;
+      lastTargetLine = target;
+
       renderCriteria();
+      renderPreviousLine();
       renderLines();
       renderInstructions();
       renderSettingsForm();
+      renderLiveStats();
     }
 
     function renderCriteria() {
@@ -188,8 +246,12 @@ if (typeof window !== "undefined") {
       }
     }
 
+    function renderPreviousLine() {
+      els.previousLine.textContent = previousLineText || "";
+    }
+
     function renderLines() {
-      const visible = snapshot.visible_lines || [];
+      const visible = (snapshot && snapshot.visible_lines) || [];
       const target = visible[0] || "";
 
       els.currentLine.innerHTML = "";
@@ -209,6 +271,9 @@ if (typeof window !== "undefined") {
         } else {
           span.className = "char-pending";
         }
+        if (flashIndex !== null && i === flashIndex) {
+          span.classList.add("char-flash");
+        }
         els.currentLine.appendChild(span);
       }
 
@@ -219,6 +284,43 @@ if (typeof window !== "undefined") {
         div.textContent = line;
         els.upcomingLines.appendChild(div);
       }
+
+      positionCaret();
+    }
+
+    function positionCaret() {
+      if (!els.caret) return;
+      const spans = els.currentLine.children;
+      let left = 0;
+      let top = 0;
+      let height = parseFloat(getComputedStyle(els.currentLine).lineHeight) || 30;
+      const idx = typed.length;
+      if (spans.length === 0) {
+        left = 0;
+        top = 0;
+      } else if (idx < spans.length) {
+        const span = spans[idx];
+        left = span.offsetLeft;
+        top = span.offsetTop;
+        height = span.offsetHeight;
+      } else {
+        const span = spans[spans.length - 1];
+        left = span.offsetLeft + span.offsetWidth;
+        top = span.offsetTop;
+        height = span.offsetHeight;
+      }
+      els.caret.style.transform = `translate(${left}px, ${top}px)`;
+      els.caret.style.height = `${height}px`;
+      els.caret.classList.toggle("hidden-caret", !snapshot || snapshot.state !== "GAME");
+    }
+
+    function markCaretSolid() {
+      if (!els.caret) return;
+      els.caret.classList.add("solid");
+      if (idleTimer) window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        els.caret.classList.remove("solid");
+      }, 500);
     }
 
     function renderInstructions() {
@@ -253,6 +355,41 @@ if (typeof window !== "undefined") {
       }
     }
 
+    // ---- live WPM / accuracy (display only, see docs/Contracts.md) --------
+
+    function renderLiveStats() {
+      if (!els.liveStats) return;
+      const s = snapshot.settings;
+      if (!s || !s.live_stats) {
+        els.liveStats.hidden = true;
+        return;
+      }
+      els.liveStats.hidden = false;
+      if (!isTyping || !lineStart || typed.length === 0) {
+        els.liveStats.textContent = "";
+        return;
+      }
+      const target = currentTarget();
+      const matches = diff(typed, target);
+      const correct = matches.slice(0, typed.length).filter(Boolean).length;
+      const elapsedMinutes = Math.max(Date.now() - lineStart, 1) / 60000;
+      const wpm = (typed.length / 5) / elapsedMinutes;
+      const accuracy = (correct / typed.length) * 100;
+      els.liveStats.textContent = `${wpm.toFixed(0)} wpm · ${accuracy.toFixed(0)}%`;
+    }
+
+    function startLiveStatsTicker() {
+      stopLiveStatsTicker();
+      liveStatsTimer = window.setInterval(renderLiveStats, 250);
+    }
+
+    function stopLiveStatsTicker() {
+      if (liveStatsTimer) {
+        window.clearInterval(liveStatsTimer);
+        liveStatsTimer = null;
+      }
+    }
+
     async function refreshState() {
       snapshot = await API.get("/api/state");
       clearError();
@@ -272,6 +409,27 @@ if (typeof window !== "undefined") {
     }
 
     // ---- keyboard handling ------------------------------------------------
+
+    function recordKeystroke(char, correct) {
+      const ms = lineStart ? Date.now() - lineStart : 0;
+      keystrokes.push({ char: char, ms: ms, correct: !!correct });
+    }
+
+    function flashOffending(index) {
+      flashIndex = index;
+      if (flashTimer) window.clearTimeout(flashTimer);
+      flashTimer = window.setTimeout(() => {
+        flashIndex = null;
+        renderLines();
+      }, 220);
+    }
+
+    function shakeLine() {
+      els.currentLine.classList.remove("shake");
+      // Force reflow so the animation restarts on repeated mistakes.
+      void els.currentLine.offsetWidth;
+      els.currentLine.classList.add("shake");
+    }
 
     function onKeyDown(event) {
       const capsOn = event.getModifierState && event.getModifierState("CapsLock");
@@ -301,6 +459,7 @@ if (typeof window !== "undefined") {
         const idx = typed.lastIndexOf(" ");
         typed = idx === -1 ? "" : typed.slice(0, idx + 1);
         renderLines();
+        renderLiveStats();
         return;
       }
 
@@ -318,42 +477,62 @@ if (typeof window !== "undefined") {
         event.preventDefault();
         typed = typed.slice(0, -1);
         renderLines();
+        renderLiveStats();
         return;
       }
       if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
         event.preventDefault();
+
         if (typed === "") {
           lineStart = Date.now();
         }
-        const target = (snapshot.visible_lines && snapshot.visible_lines[0]) || "";
-        const nextIndex = typed.length;
-        if (
-          snapshot.settings.flash_on_mistake &&
-          nextIndex < target.length &&
-          event.key !== target[nextIndex]
-        ) {
-          flashMistake();
+        if (!isTyping) {
+          setTyping(true);
+          startLiveStatsTicker();
         }
+        markCaretSolid();
+
+        const target = currentTarget();
+        const nextIndex = typed.length;
+        const correct = nextIndex < target.length && event.key === target[nextIndex];
+
+        if (snapshot.settings.flash_on_mistake && !correct) {
+          shakeLine();
+        }
+
+        if (snapshot.settings.stop_on_error && !correct) {
+          // Stop-on-error: the wrong character is not accepted into the
+          // buffer at all -- the caret does not advance -- but it is still
+          // recorded and sent, or the analysis would never see the mistakes
+          // this mode prevents (docs/UI_Refresh_Notes.md decision 1).
+          recordKeystroke(event.key, correct);
+          flashOffending(nextIndex);
+          renderLiveStats();
+          return;
+        }
+
+        recordKeystroke(event.key, correct);
         typed += event.key;
-        typedFull += event.key;
         renderLines();
+        renderLiveStats();
       }
     }
 
-    function flashMistake() {
-      els.flash.classList.add("flash-active");
-      window.setTimeout(() => els.flash.classList.remove("flash-active"), 300);
-    }
-
     // ---- actions -----------------------------------------------------------
+
+    function resetLineBuffers() {
+      typed = "";
+      keystrokes = [];
+      lineStart = null;
+      flashIndex = null;
+      setTyping(false);
+    }
 
     async function startLine() {
       try {
         snapshot = await API.post("/api/start");
         clearError();
-        typed = "";
-        typedFull = "";
-        lineStart = Date.now();
+        resetLineBuffers();
         render();
         focusTypingArea();
       } catch (err) {
@@ -365,8 +544,7 @@ if (typeof window !== "undefined") {
       try {
         snapshot = await API.post("/api/abort");
         clearError();
-        typed = "";
-        typedFull = "";
+        resetLineBuffers();
         render();
         focusTypingArea();
       } catch (err) {
@@ -376,16 +554,17 @@ if (typeof window !== "undefined") {
 
     async function submitLine() {
       const durationMs = lineStart ? Date.now() - lineStart : 0;
+      const typedFull = keystrokes.map((k) => k.char).join("");
       try {
         const data = await API.post("/api/attempt", {
           typed: typed,
           duration_ms: durationMs,
+          typed_full: typedFull,
+          keystrokes: keystrokes,
         });
         clearError();
         snapshot = data.state;
-        typed = "";
-        typedFull = "";
-        lineStart = null;
+        resetLineBuffers();
         render();
         focusTypingArea();
       } catch (err) {
@@ -397,8 +576,7 @@ if (typeof window !== "undefined") {
       try {
         snapshot = await API.post("/api/position", { delta: delta });
         clearError();
-        typed = "";
-        typedFull = "";
+        resetLineBuffers();
         render();
         focusTypingArea();
       } catch (err) {
@@ -415,8 +593,7 @@ if (typeof window !== "undefined") {
       try {
         snapshot = await API.post("/api/position", { line: line });
         clearError();
-        typed = "";
-        typedFull = "";
+        resetLineBuffers();
         render();
         focusTypingArea();
       } catch (err) {
@@ -446,6 +623,7 @@ if (typeof window !== "undefined") {
         clearError();
         renderCriteria();
         renderSettingsForm();
+        renderLiveStats();
       } catch (err) {
         showError(err.message);
       } finally {
@@ -458,8 +636,9 @@ if (typeof window !== "undefined") {
       try {
         snapshot = await API.post("/api/text", { name: name });
         clearError();
-        typed = "";
-        typedFull = "";
+        resetLineBuffers();
+        lastPosition = null;
+        previousLineText = null;
         render();
         focusTypingArea();
       } catch (err) {
@@ -478,8 +657,7 @@ if (typeof window !== "undefined") {
         clearError();
         await refreshTexts();
         snapshot = added.state;
-        typed = "";
-        typedFull = "";
+        resetLineBuffers();
         render();
       } catch (err) {
         showError(err.message);
