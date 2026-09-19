@@ -12,8 +12,8 @@ PYTHONNOUSERSITE = "1"
 
 [tasks]
 ui = "python scripts/serve.py"
-# Still the pre-refactor entry point; it becomes scripts/desktop.py at stage 3.
-desktop = "python main.py"
+# The tkinter front end; the web UI is the default.
+desktop = "python scripts/desktop.py"
 test = "pytest -q"
 where = "python scripts/where.py"
 migrate = "python scripts/migrate.py"
