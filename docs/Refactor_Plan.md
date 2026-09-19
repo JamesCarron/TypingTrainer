@@ -173,6 +173,37 @@ Verify: opened in Chrome from a served URL, screenshotted, every control read at
 - `README.md` finished with the Layout block and "Where your data lives".
 - This plan updated in place with what actually happened per stage.
 
+## Parallelising the work
+
+The stages above are written as a serial chain because that is how they are verified, but the dependency graph is not a chain. Stage 3 (the engine extraction) is the trunk: it is the only stage that rewrites existing code wholesale, everything downstream of it needs a headless `Session`, and it must not be split across agents. Everything else is either upstream of it or writes new files it does not touch.
+
+Three waves, with the critical path running straight down the middle:
+
+**Wave A — before stage 3, three streams in parallel.** None of them touch `TypingTrainer.py`, so they cannot collide.
+
+- *Hygiene and environment* (stages 0 and 1): untracking, the filename rename, `.gitignore`, `.gitattributes`, `pixi.toml`, `pyproject.toml`, `README.md`, the launcher. Touches only config and root files.
+- *Golden tests* (stage 2): `tests/test_scoring.py`, `tests/test_linebreak.py`, `tests/test_corpus_snapshot.py` and the committed snapshot, written against the current flat modules and re-pointed at the package in one line each after stage 3. All new files.
+- *Paths and migration* (stage 4's new code): `paths.py`, `migrate.py`, `scripts/where.py`, `tests/test_paths.py`, `tests/test_migrate.py`. All new files; the wiring of `config.py` and `history.py` into them waits for stage 3 because those modules do not exist yet.
+
+**Wave B — stage 3 alone.** One agent, no parallelism, because every file it produces is a judgement call about where a line of the old `Game` belongs and a second agent working the same class would be resolving merge conflicts rather than writing code. Gate: `pixi run test` green on the wave A suites, and the desktop app played through two lines by hand.
+
+Before wave B ends it must publish the two contracts wave C builds against, and they are the thing that makes wave C parallel at all: the `Session` public API (method names, argument types, the shape of the result record) and the JSON API endpoint list from stage 5. Write both into this document as the last act of wave B.
+
+**Wave C — after stage 3, three streams in parallel.**
+
+- *Web server and API* (stage 5): `web/server.py`, `scripts/serve.py`, `tests/test_server.py`, the `ui` pixi task, the launcher change.
+- *Web front end* (stage 6): `templates/page.html`, `static/page.css`, `static/page.js`, the parity fixture and `tests/js/test_diff_parity.py`. Builds against the published endpoint list, so it can start before the server is finished; the two meet at the browser check, which is serial and belongs to whoever finishes second.
+- *Desktop re-wire and text library* (stage 7 plus the tk view's share of stage 3): `desktop/app.py` finished against the real `Session`, `texts.py` library discovery, `tests/test_texts_library.py`.
+
+Stage 8 (documents) is serial and last, because it records what the other stages actually did.
+
+Practicalities, because parallel agents on one repo go wrong in predictable ways:
+
+- **One git worktree per stream**, not three agents in one checkout. Each commits in its own worktree and the branches merge at the wave gate. Three agents sharing a working tree will fight over `pixi.toml` and the index.
+- **A wave gate is a real gate.** Merge all of a wave's branches, run the full suite once on the merged tree, and only then start the next wave. A suite that was green on each branch separately is not evidence about the merge.
+- **`pixi.toml` is the one file every stream wants.** It belongs to the hygiene-and-environment stream in wave A and to nobody in wave C; a wave C stream that needs a new dependency or task asks for it rather than editing it.
+- **What this actually buys.** The whole codebase is 1,452 lines. Wave A is perhaps an hour of work split three ways, wave B is the bulk of the job and cannot be split, and wave C is genuinely three-way. Expect the parallelism to help most in wave C and to be close to overhead-neutral in wave A.
+
 ## Risks, and what they cost
 
 - **The engine split is the whole job.** If `session.py` ends up importing tkinter or reaching for `datetime.now()`, the web front end will need a second copy of the game logic and the refactor has failed in its main purpose. A test that `session.py` imports with tkinter absent is worth writing.
