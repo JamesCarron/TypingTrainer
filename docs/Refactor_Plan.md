@@ -252,4 +252,4 @@ Put to the user at the end of the planning session. All but one are settled; the
 1. ~~`Resources/PDFextract_text-main/`: delete or move out?~~ Settled 2026-09-19: delete, along with the four experiment scripts.
 2. ~~Which stylesheet for a personal public repo?~~ Settled 2026-09-19: neutral tokens of its own.
 3. ~~Plan only, or apply?~~ Settled 2026-09-19: apply all three waves autonomously.
-4. **Still open:** no `LICENSE` file and the repo is public. Naming the gap only — the choice is the user's, and licence review is explicitly not the agent's.
+4. ~~No LICENSE file and the repo is public?~~ Settled 2026-09-19: left as it is for now. Licence review is the user's, never the agent's.
