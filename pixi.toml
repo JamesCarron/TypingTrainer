@@ -1,0 +1,39 @@
+[workspace]
+authors = ["James Carron"]
+channels = ["conda-forge"]
+name = "typingtrainer"
+platforms = ["win-64"]
+version = "0.2.0"
+
+[activation.env]
+# Ignore the machine's per-user site-packages, so a globally pip-installed package cannot
+# shadow the pixi-managed one and quietly change what is being run and tested.
+PYTHONNOUSERSITE = "1"
+
+[tasks]
+ui = "python scripts/serve.py"
+# Still the pre-refactor entry point; it becomes scripts/desktop.py at stage 3.
+desktop = "python main.py"
+test = "pytest -q"
+where = "python scripts/where.py"
+migrate = "python scripts/migrate.py"
+
+[dependencies]
+# Stdlib plus three small packages; the pin exists to keep the interpreter reproducible.
+python = ">=3.12,<3.15"
+# platformdirs: resolves the state, cache and Documents roots. pillow: the desktop view's
+# mascot image. tk: the desktop front end and the web UI's native folder picker.
+platformdirs = "*"
+pillow = "*"
+tk = "*"
+
+[pypi-dependencies]
+# The package itself, editable: this is what makes the src/ layout importable from
+# scripts/ and tests/ without path hacks.
+typingtrainer = { path = ".", editable = true }
+
+[feature.dev.dependencies]
+pytest = "*"
+
+[environments]
+default = { features = ["dev"], solve-group = "default" }

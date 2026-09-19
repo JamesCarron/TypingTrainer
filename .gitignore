@@ -1,1 +1,9 @@
-/__pycache__
+/__pycache__/
+**/__pycache__/
+*.pyc
+.idea/
+.venv/
+.pixi/
+.pytest_cache/
+SaveGame.pickleddict
+/config.json

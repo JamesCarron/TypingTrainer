@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "typingtrainer"
+version = "0.2.0"
+description = "Type your way through a book, line by line, scored on accuracy and words per minute."
+requires-python = ">=3.12"
+# Dependencies are declared in pixi.toml, which owns the environment. This file exists
+# so the package can be installed editable and to hold tool configuration.
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/typingtrainer"]
+
+[tool.pytest.ini_options]
+# importlib mode: pytest never edits sys.path, so tests import the installed package
+# and can never pick up a stray copy from the checkout.
+addopts = ["--import-mode=importlib"]
+testpaths = ["tests"]

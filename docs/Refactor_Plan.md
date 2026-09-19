@@ -18,6 +18,9 @@ Asked and answered before the plan was written. Recorded here so the next sessio
 - **Data roots carry no `Auterion` vendor folder**, following from the above: state at `%LOCALAPPDATA%\TypingTrainer\`, cache at `%LOCALAPPDATA%\TypingTrainer\Cache\`, user texts and exports at `~\Documents\TypingTrainer\`, all overridable together by `TYPINGTRAINER_HOME`.
 - **Both front ends are kept, on one shared core.** The tkinter app is not frozen or deleted; it becomes a thin view over the extracted engine, so it keeps working offline with no server. The cost is accepted knowingly: every new feature has to land in two views, and the engine is what stops that becoming two implementations.
 - **JS renders, Python scores.** The browser captures keystrokes and paints the per-character diff live — a round trip per keystroke is not viable — but the moment a line is submitted, Python is authoritative for accuracy, WPM, pass/fail and persistence. The duplicated character comparison is covered by a parity test: the JS diff must equal `compare_lines()` over a fixture corpus.
+- **Execution is autonomous across all three waves**, gating on a green suite between waves and stopping only on a failure or a decision that cannot be made without the user.
+- **The web UI carries neutral tokens of its own**, not the Auterion house stylesheet: the same discipline (semantic CSS variables, light and dark, no raw hex outside `:root`) with a palette that belongs to this project, because nothing Auterion-branded should ship in a personal public repo.
+- **`Resources/` goes entirely.** The vendored `PDFextract_text-main` Flask tutorial and all four superseded experiment scripts are deleted; git history holds them.
 - **`SaveGame.pickleddict` migrates to JSON and leaves the working tree.** A one-off `pixi run migrate` reads the pickle, writes history and per-text positions as JSON into the state dir, reports what it moved, and the file is then `git rm`ed. The pickle stays in past commits; git history is not being rewritten.
 
 ## Current state
@@ -199,7 +202,7 @@ Stage 8 (documents) is serial and last, because it records what the other stages
 
 Practicalities, because parallel agents on one repo go wrong in predictable ways:
 
-- **One git worktree per stream**, not three agents in one checkout. Each commits in its own worktree and the branches merge at the wave gate. Three agents sharing a working tree will fight over `pixi.toml` and the index.
+- **One checkout, disjoint file ownership, and only the orchestrator runs git.** Worktrees were the first plan and were dropped: the streams' file sets are provably disjoint (new files in `tests/`, new files in `src/typingtrainer/`), so the only real contention is the git index and `pixi.toml`, and taking both away from the streams removes it without paying for three pixi environments and three merges. Each stream writes and tests; the orchestrator commits it.
 - **A wave gate is a real gate.** Merge all of a wave's branches, run the full suite once on the merged tree, and only then start the next wave. A suite that was green on each branch separately is not evidence about the merge.
 - **`pixi.toml` is the one file every stream wants.** It belongs to the hygiene-and-environment stream in wave A and to nobody in wave C; a wave C stream that needs a new dependency or task asks for it rather than editing it.
 - **What this actually buys.** The whole codebase is 1,452 lines. Wave A is perhaps an hour of work split three ways, wave B is the bulk of the job and cannot be split, and wave C is genuinely three-way. Expect the parallelism to help most in wave C and to be close to overhead-neutral in wave A.
@@ -218,9 +221,9 @@ Apply the stages in order with `/refactor-project C:\GitHub\TypingTrainer`, or r
 
 ## Open questions
 
-Put to the user at the end of the planning session; answers get recorded here.
+Put to the user at the end of the planning session. All but one are settled; the answers are in "Decisions taken up front" above.
 
-1. `Resources/PDFextract_text-main/` is an unrelated vendored tutorial (a Flask PDF-extraction demo) with its own README. Delete it, or move it out of the repo?
-2. The four scripts in `Resources/` are superseded experiments. Keep them as `docs/legacy_experiments/`, or delete them and let git history hold them?
-3. Which stylesheet does a personal public GitHub repo use? The house rule points every generated page at `C:\Auterion\Tools\brand`, which is Auterion brand material and would not belong in a public personal project.
-4. No `LICENSE` file and the repo is public. Naming the gap only — the choice is yours.
+1. ~~`Resources/PDFextract_text-main/`: delete or move out?~~ Settled 2026-09-19: delete, along with the four experiment scripts.
+2. ~~Which stylesheet for a personal public repo?~~ Settled 2026-09-19: neutral tokens of its own.
+3. ~~Plan only, or apply?~~ Settled 2026-09-19: apply all three waves autonomously.
+4. **Still open:** no `LICENSE` file and the repo is public. Naming the gap only — the choice is the user's, and licence review is explicitly not the agent's.
