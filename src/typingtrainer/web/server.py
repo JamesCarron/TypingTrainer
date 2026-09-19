@@ -160,10 +160,14 @@ def _clean_keystrokes(raw):
             ms = float(entry.get("ms", 0.0))
         except (TypeError, ValueError) as exc:
             raise ApiError(400, "keystrokes: ms must be a number") from exc
+        expected = entry.get("expected")
+        if expected is not None and (not isinstance(expected, str) or len(expected) > 8):
+            raise ApiError(400, "keystrokes: expected must be a short string or null")
         correct = entry.get("correct")
         cleaned.append(
             {
                 "char": char,
+                "expected": expected,
                 "ms": ms,
                 "correct": None if correct is None else bool(correct),
             }

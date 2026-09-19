@@ -183,7 +183,10 @@
 
   function renderReport(report) {
     renderTiles(report.progress.overall_stats, report.data_coverage);
-    renderConfusionTable(report.weak_points.confusion_pairs);
+    renderConfusionTable(
+      report.weak_points.confusion_pairs,
+      report.weak_points.keystroke_confusions
+    );
     renderProblemWords(report.weak_points.problem_words);
     renderErrorCategories(report.weak_points.error_categories);
     renderHeatmap(report.weak_points.character_error_rates);
@@ -223,16 +226,27 @@
 
   // ---- weak points ---------------------------------------------------------------
 
-  function renderConfusionTable(confusion) {
+  // Two sources, and the keystroke one is the honest one: a line that is
+  // retyped until it passes submits no mistakes at all, so the submitted-text
+  // version undercounts badly under a strict accuracy criterion. Prefer the
+  // keystrokes wherever they have anything, and say which is being shown.
+  function renderConfusionTable(confusion, fromKeystrokes) {
     const el = $("confusion-table");
-    const rows = confusion.pairs.slice(0, 20);
+    const ks = fromKeystrokes || { pairs: [], total_errors: 0 };
+    const usingKeystrokes = ks.pairs && ks.pairs.length > 0;
+    const rows = (usingKeystrokes ? ks.pairs : confusion.pairs).slice(0, 20);
     if (!rows.length) {
       el.innerHTML = emptyNote(
-        "No confusions found yet. This needs a handful of attempts on lines of similar length to the target."
+        "No confusions found yet. Mistakes you correct before submitting a line only show up once " +
+          "keystrokes carry what you meant to press, recorded from 2026-09-19 onwards — keep typing."
       );
       return;
     }
-    el.innerHTML = table(
+    const source = usingKeystrokes
+      ? "From every key you pressed, so corrected mistakes count too."
+      : "From the submitted lines only. A line you retype until it passes hides its mistakes here; " +
+        "those appear once there are keystrokes to read.";
+    el.innerHTML = '<p class="note">' + source + "</p>" + table(
       [
         { label: "You meant", mono: true, render: (r) => (r.intended === " " ? "(space)" : escapeHtml(r.intended)) },
         { label: "You typed", mono: true, render: (r) => (r.typed === " " ? "(space)" : escapeHtml(r.typed)) },

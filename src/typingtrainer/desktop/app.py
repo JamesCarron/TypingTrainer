@@ -366,26 +366,39 @@ class Game:
                 self.time_start = datetime.now()
             target_line = self.session.current_line()
             next_index = len(self.user_input)
-            correct = next_index < len(target_line) and event.char == target_line[next_index]
+            expected = target_line[next_index] if next_index < len(target_line) else None
+            correct = expected is not None and event.char == expected
             if self.session.settings.flash_on_mistake and event.char and not correct:
                 self.flash_mistake()
             if self.session.settings.stop_on_error and event.char and not correct:
                 # Stop-on-error: the wrong character is simply not accepted, so the
                 # typist cannot run ahead of their own accuracy. Still recorded, or
                 # the analysis would never see the mistakes this mode prevents.
-                self._record_keystroke(event.char, correct)
+                self._record_keystroke(event.char, correct, expected)
                 self.draw_textbox()
                 return
             if event.char:
-                self._record_keystroke(event.char, correct)
+                self._record_keystroke(event.char, correct, expected)
             self.user_input += event.char
             self.user_input_full += event.char
             self.draw_textbox()
 
-    def _record_keystroke(self, char, correct):
-        """One entry of the per-line keystroke record, ms from the first keypress."""
+    def _record_keystroke(self, char, correct, expected=None):
+        """One entry of the per-line keystroke record, ms from the first keypress.
+
+        ``expected`` is what the typist should have pressed. It is recorded at
+        press time because it cannot be worked out afterwards: backspaces are
+        not part of the record, so the position at any given press is ambiguous.
+        """
         ms = (datetime.now() - self.time_start).total_seconds() * 1000.0
-        self.keystrokes.append({"char": char, "ms": round(ms, 1), "correct": bool(correct)})
+        self.keystrokes.append(
+            {
+                "char": char,
+                "expected": expected,
+                "ms": round(ms, 1),
+                "correct": bool(correct),
+            }
+        )
 
     def submit(self):
         """Hand the line to the engine and show what it said."""

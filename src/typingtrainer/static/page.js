@@ -419,9 +419,19 @@ if (typeof window !== "undefined") {
 
     // ---- keyboard handling ------------------------------------------------
 
-    function recordKeystroke(char, correct) {
+    // `expected` is what the typist should have pressed at this position. It is
+    // recorded at press time because it cannot be reconstructed later:
+    // backspaces are deliberately not part of the record, so the position at
+    // any given press is ambiguous. It is also the only place a mistake
+    // survives on a line that gets corrected before being submitted.
+    function recordKeystroke(char, correct, expected) {
       const ms = lineStart ? Date.now() - lineStart : 0;
-      keystrokes.push({ char: char, ms: ms, correct: !!correct });
+      keystrokes.push({
+        char: char,
+        expected: expected === undefined ? null : expected,
+        ms: ms,
+        correct: !!correct,
+      });
     }
 
     function flashOffending(index) {
@@ -514,7 +524,8 @@ if (typeof window !== "undefined") {
 
         const target = currentTarget();
         const nextIndex = typed.length;
-        const correct = nextIndex < target.length && event.key === target[nextIndex];
+        const expected = nextIndex < target.length ? target[nextIndex] : null;
+        const correct = expected !== null && event.key === expected;
 
         if (snapshot.settings.flash_on_mistake && !correct) {
           shakeLine();
@@ -525,13 +536,13 @@ if (typeof window !== "undefined") {
           // buffer at all -- the caret does not advance -- but it is still
           // recorded and sent, or the analysis would never see the mistakes
           // this mode prevents (docs/UI_Refresh_Notes.md decision 1).
-          recordKeystroke(event.key, correct);
+          recordKeystroke(event.key, correct, expected);
           flashOffending(nextIndex);
           renderLiveStats();
           return;
         }
 
-        recordKeystroke(event.key, correct);
+        recordKeystroke(event.key, correct, expected);
         typed += event.key;
         renderLines();
         renderLiveStats();

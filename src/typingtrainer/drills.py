@@ -80,15 +80,38 @@ def _round(x, nd=4):
 # ---------------------------------------------------------------------------
 
 
+def _char_error_source(weak_points: dict) -> list:
+    """Per-character error rows, keystroke-derived where possible.
+
+    The submitted-text view only sees mistakes that survived into the finished
+    line, and under a strict accuracy criterion a line is retyped until it
+    passes -- so those mistakes are exactly the ones that never get submitted.
+    On the real history, 209 attempts yielded eight visible errors against
+    thousands of keypresses. Falling back keeps records from before keystrokes
+    carried the expected character usable.
+    """
+    return weak_points.get("keystroke_character_errors", {}).get("characters", []) or (
+        weak_points.get("character_error_rates", {}).get("characters", [])
+    )
+
+
+def _confusion_source(weak_points: dict) -> list:
+    """Confusion pairs, keystroke-derived where possible; see ``_char_error_source``."""
+    return weak_points.get("keystroke_confusions", {}).get("pairs", []) or (
+        weak_points.get("confusion_pairs", {}).get("pairs", [])
+    )
+
+
 def weak_targets(report: dict, limit: int = 10) -> list:
     """Distil ``analysis.full_report()`` into a ranked list of things to practise.
 
     Three kinds of entry, each pulled from a different part of the report:
 
     - ``"char"`` -- a character with a high error rate
-      (``weak_points.character_error_rates``).
+      (``weak_points.keystroke_character_errors``, falling back to
+      ``weak_points.character_error_rates`` -- see ``_char_error_source``).
     - ``"confusion"`` -- a frequent (intended, typed) substitution
-      (``weak_points.confusion_pairs``).
+      (``weak_points.keystroke_confusions``, same fallback).
     - ``"bigram"`` -- a slow key-to-key transition
       (``speed.bigram_latencies``, only present once keystrokes have been
       recorded -- absent entirely for older history, in which case this
@@ -131,7 +154,7 @@ def weak_targets(report: dict, limit: int = 10) -> list:
 
     char_rows = [
         r
-        for r in weak_points.get("character_error_rates", {}).get("characters", [])
+        for r in _char_error_source(weak_points)
         if r.get("seen", 0) >= _MIN_CHAR_SAMPLES
         and r.get("mistyped", 0) > 0
         and r.get("char") not in (" ", "\t", "\n")
@@ -140,7 +163,7 @@ def weak_targets(report: dict, limit: int = 10) -> list:
 
     confusion_rows = [
         r
-        for r in weak_points.get("confusion_pairs", {}).get("pairs", [])
+        for r in _confusion_source(weak_points)
         if r.get("count", 0) >= _MIN_CONFUSION_COUNT
     ]
     confusion_rows.sort(key=lambda r: (-r["count"], r["intended"], r["typed"]))
@@ -157,7 +180,9 @@ def weak_targets(report: dict, limit: int = 10) -> list:
     for i, r in enumerate(char_rows):
         score = _percentile_score(i, n)
         reason = (
-            f"mistyped {r['mistyped']} times in {r['seen']} attempts "
+            # "sightings", not "attempts": the source counts how often the
+            # character came up, which is per keypress, not per line.
+            f"mistyped {r['mistyped']} times in {r['seen']} sightings "
             f"({r['error_rate'] * 100:.0f}% error rate)"
         )
         targets.append(

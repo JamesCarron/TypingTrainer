@@ -6,7 +6,8 @@ which in turn replaced the original pickle. Both older formats migrate in
 automatically and are left on disk untouched; see ``import_legacy_json``.
 
 Why a database. Every attempt now carries its keystrokes -- roughly a hundred rows
-of ``(char, ms, correct)`` per line -- because per-key and bigram latency is what
+of ``(char, expected, ms, correct)`` per line -- because per-key and bigram
+latency, and the mistakes a retyped line hides, are what
 actually identifies a weak point, and that cannot be reconstructed afterwards. A
 JSON file rewritten in full on every line does not survive that; ten thousand lines
 of keystrokes is tens of megabytes read and written per attempt.
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS keystrokes (
     attempt_id INTEGER NOT NULL REFERENCES attempts (id) ON DELETE CASCADE,
     seq        INTEGER NOT NULL,
     char       TEXT,
+    expected   TEXT,
     ms         REAL,
     correct    INTEGER,
     PRIMARY KEY (attempt_id, seq)
@@ -107,10 +109,34 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _add_missing_columns(conn)
     conn.commit()
     if first_time:
         import_legacy_json(conn)
     return conn
+
+
+#: Columns added to an existing table after it shipped. ``CREATE TABLE IF NOT
+#: EXISTS`` does nothing to a table that already exists, so a database created
+#: before a column was introduced needs it added explicitly. Additive only:
+#: SQLite cannot drop a column without rebuilding the table, and nothing here
+#: is allowed to rewrite a user's history.
+_ADDED_COLUMNS = {
+    # 2026-09-19: what the typist was supposed to press. Recorded because the
+    # expected character cannot be reconstructed afterwards -- backspaces are
+    # deliberately not recorded, so the position at any given press is
+    # ambiguous -- and because with a 99% accuracy floor the submitted text is
+    # almost always perfect, so the mistakes only exist in the keystrokes.
+    "keystrokes": {"expected": "TEXT"},
+}
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def import_legacy_json(conn: sqlite3.Connection) -> dict:
@@ -163,13 +189,14 @@ def _insert_attempt(conn, key, record, keystrokes) -> int:
     attempt_id = cur.lastrowid
     if keystrokes:
         conn.executemany(
-            "INSERT INTO keystrokes (attempt_id, seq, char, ms, correct)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO keystrokes (attempt_id, seq, char, expected, ms, correct)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             [
                 (
                     attempt_id,
                     seq,
                     k.get("char"),
+                    k.get("expected"),
                     float(k.get("ms", 0.0)),
                     None if k.get("correct") is None else int(bool(k.get("correct"))),
                 )
@@ -199,7 +226,7 @@ def _row_to_record(row: sqlite3.Row) -> dict:
 def append_attempt(record: dict, key: str | None = None, keystrokes=None) -> str:
     """Add one attempt and return the key it was stored under.
 
-    ``keystrokes`` is a list of ``{"char": str, "ms": float, "correct": bool}`` in
+    ``keystrokes`` is a list of ``{"char", "expected", "ms", "correct"}`` in
     the order they were pressed, ``ms`` measured from the first keypress of the
     line. It may be omitted: attempts recorded before instrumentation, and the
     migrated ones, simply have none, and every analysis that needs timing skips
@@ -290,13 +317,14 @@ def read_keystrokes(key: str) -> list:
     conn = connect()
     try:
         rows = conn.execute(
-            "SELECT k.seq, k.char, k.ms, k.correct FROM keystrokes k"
+            "SELECT k.seq, k.char, k.expected, k.ms, k.correct FROM keystrokes k"
             " JOIN attempts a ON a.id = k.attempt_id WHERE a.key = ? ORDER BY k.seq",
             (key,),
         ).fetchall()
         return [
             {
                 "char": row["char"],
+                "expected": row["expected"],
                 "ms": row["ms"],
                 "correct": None if row["correct"] is None else bool(row["correct"]),
             }
@@ -325,12 +353,14 @@ def iter_keystroke_attempts(text_name: str | None = None) -> list:
         }
         strokes = {aid: [] for aid in attempts}
         for row in conn.execute(
-            "SELECT attempt_id, char, ms, correct FROM keystrokes ORDER BY attempt_id, seq"
+            "SELECT attempt_id, char, expected, ms, correct FROM keystrokes"
+            " ORDER BY attempt_id, seq"
         ):
             if row["attempt_id"] in strokes:
                 strokes[row["attempt_id"]].append(
                     {
                         "char": row["char"],
+                        "expected": row["expected"],
                         "ms": row["ms"],
                         "correct": None if row["correct"] is None else bool(row["correct"]),
                     }

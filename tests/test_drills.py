@@ -105,7 +105,7 @@ def test_weak_targets_ranking_scores_and_reasons():
     ]
 
     by_target = {(t["kind"], t["target"]): t for t in targets}
-    assert by_target[("char", "e")]["reason"] == "mistyped 5 times in 10 attempts (50% error rate)"
+    assert by_target[("char", "e")]["reason"] == "mistyped 5 times in 10 sightings (50% error rate)"
     assert by_target[("confusion", "e>r")]["reason"] == "typed 'r' instead of 'e', 14 times"
     assert (
         by_target[("bigram", "th")]["reason"]
@@ -436,3 +436,49 @@ def test_practice_plan_with_data_produces_targets_and_a_typeable_drill(isolated,
     assert isinstance(plan["hard_lines"], list)
     assert isinstance(plan["trouble_words"], list)
     assert "proposed_min_wpm" in plan["criteria_suggestion"]
+
+
+def test_weak_targets_prefers_the_keystroke_views():
+    """A mistake corrected before submitting exists only in the keystroke view;
+    the loop must still target it, or a careful typist gets no drills at all."""
+    report = {
+        "weak_points": {
+            # the submitted-text views saw a perfect line
+            "character_error_rates": {"characters": []},
+            "confusion_pairs": {"pairs": []},
+            "keystroke_character_errors": {
+                "characters": [
+                    {"char": "g", "seen": 10, "mistyped": 5, "error_rate": 0.5}
+                ]
+            },
+            "keystroke_confusions": {
+                "pairs": [{"intended": "g", "typed": "x", "count": 5}]
+            },
+        },
+        "speed": {},
+    }
+    targets = drills.weak_targets(report)
+    kinds = {t["kind"]: t["target"] for t in targets}
+    assert kinds.get("char") == "g"
+    assert kinds.get("confusion") == "g>x"
+
+
+def test_weak_targets_falls_back_to_submitted_text_for_old_history():
+    """Records from before keystrokes carried `expected` must still be usable."""
+    report = {
+        "weak_points": {
+            "character_error_rates": {
+                "characters": [
+                    {"char": "q", "seen": 8, "mistyped": 4, "error_rate": 0.5}
+                ]
+            },
+            "confusion_pairs": {"pairs": [{"intended": "q", "typed": "w", "count": 3}]},
+            "keystroke_character_errors": {"characters": []},
+            "keystroke_confusions": {"pairs": []},
+        },
+        "speed": {},
+    }
+    targets = drills.weak_targets(report)
+    kinds = {t["kind"]: t["target"] for t in targets}
+    assert kinds.get("char") == "q"
+    assert kinds.get("confusion") == "q>w"

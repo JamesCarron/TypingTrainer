@@ -390,6 +390,87 @@ def correction_rate(attempts: list) -> dict:
     }
 
 
+def keystroke_confusions(instrumented: list) -> dict:
+    """Rank (intended, typed) substitutions from the keystrokes, corrections included.
+
+    This is the honest version of ``confusion_pairs``, and on a store built
+    under a strict accuracy criterion it is the only one with anything to
+    work with. ``confusion_pairs`` can only see mistakes that survived into
+    the submitted line, and a typist who retypes until the line passes never
+    submits one: measured on the real history on 2026-09-19, 209 attempts and
+    20,566 characters yielded eight visible errors. Every mistake the typist
+    actually made is here instead -- including the ones they backspaced over
+    and, in stop-on-error mode, the ones that were refused outright.
+
+    Needs the ``expected`` field, recorded from 2026-09-19. Keystrokes
+    without it are counted in ``skipped_no_expected`` rather than guessed at:
+    the expected character cannot be reconstructed after the fact, because
+    backspaces are not part of the record and the position at any given press
+    is therefore ambiguous.
+    """
+    counts: Counter = Counter()
+    skipped = 0
+    considered = 0
+    attempts_used = 0
+    for _key, _record, keystrokes in instrumented:
+        used_this_attempt = False
+        for stroke in keystrokes:
+            expected = stroke.get("expected")
+            char = stroke.get("char")
+            if expected is None or char is None:
+                skipped += 1
+                continue
+            considered += 1
+            used_this_attempt = True
+            if char != expected:
+                counts[(expected, char)] += 1
+        if used_this_attempt:
+            attempts_used += 1
+    pairs = [
+        {"intended": intended, "typed": typed, "count": count}
+        for (intended, typed), count in counts.most_common()
+    ]
+    return {
+        "pairs": pairs,
+        "total_errors": sum(counts.values()),
+        "keystrokes_considered": considered,
+        "attempts_with_expected": attempts_used,
+        "skipped_no_expected": skipped,
+    }
+
+
+def keystroke_character_errors(instrumented: list) -> dict:
+    """Per intended character: times attempted, times mistyped, error rate.
+
+    Same source and the same caveat as ``keystroke_confusions``: this counts
+    what the fingers did, not what the submitted line ended up saying, so it
+    sees the corrected mistakes too. The keyboard heatmap should prefer this
+    over the submitted-text version once there is data in it.
+    """
+    seen: Counter = Counter()
+    wrong: Counter = Counter()
+    for _key, _record, keystrokes in instrumented:
+        for stroke in keystrokes:
+            expected = stroke.get("expected")
+            char = stroke.get("char")
+            if expected is None or char is None:
+                continue
+            seen[expected] += 1
+            if char != expected:
+                wrong[expected] += 1
+    rows = [
+        {
+            "char": ch,
+            "seen": n,
+            "mistyped": wrong.get(ch, 0),
+            "error_rate": _round(wrong.get(ch, 0) / n, 4) if n else 0.0,
+        }
+        for ch, n in seen.items()
+    ]
+    rows.sort(key=lambda r: (-r["error_rate"], -r["seen"], r["char"]))
+    return {"characters": rows, "characters_seen": len(rows)}
+
+
 # ---------------------------------------------------------------------------
 # 2. SPEED (needs keystroke timing; degrades gracefully without it)
 # ---------------------------------------------------------------------------
@@ -843,6 +924,10 @@ def full_report(text_name: str | None = None) -> dict:
         },
         "weak_points": {
             "confusion_pairs": confusion_pairs(attempts),
+            # From the keystrokes, so it includes mistakes that were corrected
+            # before the line was submitted. Prefer this one wherever it has data.
+            "keystroke_confusions": keystroke_confusions(instrumented),
+            "keystroke_character_errors": keystroke_character_errors(instrumented),
             "character_error_rates": character_error_rates(attempts),
             "problem_words": problem_words(attempts),
             "error_categories": error_categories(attempts),

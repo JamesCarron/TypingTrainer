@@ -561,3 +561,73 @@ def test_a_fast_but_plausible_attempt_is_kept():
     stats = analysis.overall_stats(attempts, today=date(2026, 9, 1))
     assert stats["top_wpm"] == 150.0
     assert stats["excluded_implausible"] == 0
+
+
+# --- keystroke-derived confusions (added 2026-09-19: the submitted text is
+# --- almost always perfect under a strict accuracy floor, so the real
+# --- mistakes only exist in the keystrokes) ----------------------------------
+
+
+def _instrumented(key, strokes):
+    """(key, record, keystrokes) as history.iter_keystroke_attempts yields it."""
+    return (key, {"TextName": "T", "Answer": "the", "user_input": "the"}, strokes)
+
+
+def _k(char, expected, ms=100.0):
+    return {"char": char, "expected": expected, "ms": ms, "correct": char == expected}
+
+
+def test_keystroke_confusions_sees_a_corrected_mistake():
+    """The submitted line is perfect; the mistake exists only in the keystrokes."""
+    strokes = [_k("t", "t"), _k("r", "h"), _k("h", "h"), _k("e", "e")]
+    got = analysis.keystroke_confusions([_instrumented("k1", strokes)])
+    assert got["pairs"] == [{"intended": "h", "typed": "r", "count": 1}]
+    assert got["total_errors"] == 1
+    assert got["keystrokes_considered"] == 4
+    assert got["attempts_with_expected"] == 1
+    assert got["skipped_no_expected"] == 0
+
+
+def test_keystroke_confusions_ranks_by_count():
+    strokes = (
+        [_k("r", "e") for _ in range(3)]
+        + [_k("m", "n")]
+        + [_k("a", "a") for _ in range(5)]
+    )
+    got = analysis.keystroke_confusions([_instrumented("k1", strokes)])
+    assert got["pairs"][0] == {"intended": "e", "typed": "r", "count": 3}
+    assert got["pairs"][1] == {"intended": "n", "typed": "m", "count": 1}
+
+
+def test_keystroke_confusions_skips_strokes_recorded_before_the_field_existed():
+    """Old keystrokes have no `expected`; it cannot be reconstructed, so they are
+    counted as skipped rather than guessed at."""
+    strokes = [{"char": "a", "ms": 10.0, "correct": True}, _k("r", "e")]
+    got = analysis.keystroke_confusions([_instrumented("k1", strokes)])
+    assert got["skipped_no_expected"] == 1
+    assert got["keystrokes_considered"] == 1
+    assert got["total_errors"] == 1
+
+
+def test_keystroke_confusions_empty():
+    got = analysis.keystroke_confusions([])
+    assert got["pairs"] == []
+    assert got["total_errors"] == 0
+    assert got["attempts_with_expected"] == 0
+
+
+def test_keystroke_character_errors_rates_and_ordering():
+    strokes = [_k("r", "e"), _k("e", "e"), _k("x", "a"), _k("a", "a"), _k("a", "a")]
+    got = analysis.keystroke_character_errors([_instrumented("k1", strokes)])
+    by_char = {r["char"]: r for r in got["characters"]}
+    assert by_char["e"] == {"char": "e", "seen": 2, "mistyped": 1, "error_rate": 0.5}
+    assert by_char["a"] == {"char": "a", "seen": 3, "mistyped": 1, "error_rate": 0.3333}
+    # worst rate first
+    assert got["characters"][0]["char"] == "e"
+
+
+def test_keystroke_character_errors_empty():
+    assert analysis.keystroke_character_errors([]) == {
+        "characters": [],
+        "characters_seen": 0,
+    }
