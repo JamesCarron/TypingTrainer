@@ -1,0 +1,424 @@
+[
+  {
+    "target": "hello world",
+    "typed": "hello world",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "hello world",
+    "typed": "hallo world",
+    "matches": [
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "hello world",
+    "typed": "helol world",
+    "matches": [
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "hello world",
+    "typed": "hello wrld",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "hello world",
+    "typed": "hello, world!!",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "hello world",
+    "typed": "",
+    "matches": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "Hello, World!",
+    "typed": "hello, world!",
+    "matches": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "café",
+    "typed": "café",
+    "matches": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "café",
+    "typed": "cafe",
+    "matches": [
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "target": "naïve",
+    "typed": "naive",
+    "matches": [
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "",
+    "typed": "",
+    "matches": []
+  },
+  {
+    "target": "",
+    "typed": "abc",
+    "matches": [
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "abc",
+    "typed": "abc def",
+    "matches": [
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "The quick brown fox",
+    "typed": "The quikc brown fox",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "Testing 123!",
+    "typed": "Testing 123!",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "Testing 123!",
+    "typed": "Testing 124!",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "target": "a.b.c.",
+    "typed": "a,b,c,",
+    "matches": [
+      true,
+      false,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  {
+    "target": "Line with -- dashes",
+    "typed": "Line with -- dashes",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "multiple   spaces",
+    "typed": "multiple spaces",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "Tab\tSeparated",
+    "typed": "Tab Separated",
+    "matches": [
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "emoji test 😀",
+    "typed": "emoji test 😀",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "target": "emoji test 😀",
+    "typed": "emoji test 😁",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "target": "short",
+    "typed": "short and much longer",
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "target": "much longer than the guess text",
+    "typed": "short",
+    "matches": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  }
+]
