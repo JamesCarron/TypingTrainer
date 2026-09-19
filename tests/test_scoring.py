@@ -87,17 +87,29 @@ def test_typing_score_totally_wrong_guess():
     assert result["wpm"] == 0.0
 
 
-def test_typing_score_empty_answer_raises_zero_division():
-    """Known quirk of the current code, preserved verbatim: an empty answer divides by
-    zero in the accuracy calculation. See the report accompanying this test suite --
-    not fixed here, just pinned so a later refactor notices if it silently changes."""
-    with pytest.raises(ZeroDivisionError):
-        typing_score("abc", "", 1.0)
+def test_typing_score_handles_an_empty_answer():
+    """Fixed 2026-09-19: this used to raise ZeroDivisionError. Typing something
+    against an empty target scores nothing; typing nothing against it is perfect."""
+    scored = typing_score("abc", "", 1.0)
+    assert scored["accuracy"] == 0.0
+    assert scored["wpm"] == 0.0
+
+    empty = typing_score("", "", 1.0)
+    assert empty["accuracy"] == 1.0
+    assert empty["wpm"] == 0.0
 
 
-# passing_grade: copied from Game.passing_grade. Note the ValueError for accuracy > 1
-# only fires when require_accuracy is set, since the check lives inside that branch in
-# the original code -- preserved as-is.
+def test_typing_score_handles_a_zero_duration():
+    """Same family of fix: a zero duration is not a human typing, and it used to
+    divide by zero. One such record (1236 wpm) is in the real history."""
+    scored = typing_score("abc", "abc", 0.0)
+    assert scored["accuracy"] == 1.0
+    assert scored["wpm"] == 0.0
+
+
+# passing_grade: from Game.passing_grade. The ValueError for accuracy > 1 fires
+# regardless of whether the accuracy criterion is on (fixed 2026-09-19); it is a
+# check on the scorer, not on the criterion.
 
 
 def test_passing_grade_accuracy_only_pass():
@@ -157,11 +169,12 @@ def test_passing_grade_accuracy_over_one_raises():
         )
 
 
-def test_passing_grade_accuracy_over_one_does_not_raise_when_not_required():
-    """Quirk preserved from the original: the >1 check lives inside the
-    require_accuracy branch, so an impossible accuracy value silently passes
-    through when require_accuracy is False."""
+def test_passing_grade_rejects_an_impossible_accuracy_even_when_not_required():
+    """Fixed 2026-09-19: the >1 guard used to sit inside the require_accuracy
+    branch, so an impossible score sailed through whenever that criterion was
+    switched off. It catches a broken scorer, so it applies either way."""
     results = {"accuracy": 1.5, "wpm": 10.0}
-    assert passing_grade(
-        results, require_accuracy=False, min_accuracy=1.0, require_wpm=False, min_wpm=0
-    )
+    with pytest.raises(ValueError):
+        passing_grade(
+            results, require_accuracy=False, min_accuracy=1.0, require_wpm=False, min_wpm=0
+        )

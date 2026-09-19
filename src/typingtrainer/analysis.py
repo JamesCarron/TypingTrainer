@@ -19,7 +19,7 @@ whose length differs too much from the target and report how many they
 skipped (``skipped_length_mismatch``), rather than pretending the alignment is
 sound for every record.
 
-Old records are messy (see CLAUDE.md and docs/UI_Refresh_Notes.md): three have
+Old records are messy (see AGENTS.md and docs/UI_Refresh_Notes.md): three have
 no "Length" (this module never reads that field -- ``len(Answer)`` is used
 instead, which sidesteps the problem entirely), some have an unformatted
 ``EventTime`` (the literal unsubstituted f-string from a pre-refactor bug),

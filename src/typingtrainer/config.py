@@ -29,9 +29,12 @@ class Settings:
     min_wpm: float = 20.0
     show_criteria: bool = True
     flash_on_mistake: bool = True
-    # Added 2026-09-19 with the UI refresh. Off by default: it changes how the
-    # app feels to use, and the pass criteria already enforce accuracy per line.
-    stop_on_error: bool = False
+    # Added 2026-09-19 with the UI refresh, and switched on by default the same
+    # day at the user's request: with a 99% accuracy floor a line with a mistake
+    # is retyped anyway, so refusing the character does the same job without
+    # spending the attempt, and it is what makes the keystroke error data
+    # richest. Switch it off in Settings if it gets in the way.
+    stop_on_error: bool = True
     live_stats: bool = True
 
     @classmethod

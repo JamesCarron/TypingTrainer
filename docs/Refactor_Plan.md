@@ -47,7 +47,7 @@ Audit against the standard (`refactor-project\audit.py`, 2026-09-19): git presen
 ```
 TypingTrainer/
   TypingTrainer.bat            launcher: default web UI, --desktop for tkinter
-  README.md  CLAUDE.md         what it is and how to run it; agent conventions
+  README.md  AGENTS.md         what it is and how to run it; agent conventions
   pixi.toml  pixi.lock         tasks: ui, desktop, test, where, migrate
   pyproject.toml               package name, src layout, pytest importlib mode
   .gitignore  .gitattributes
@@ -172,7 +172,7 @@ Verify: opened in Chrome from a served URL, screenshotted, every control read at
 
 ### Stage 8 — documents
 
-- `CLAUDE.md` at root: the two-front-ends rule, where logic may and may not live, how to run the tests, and the parity requirement.
+- `AGENTS.md` at root (written as `CLAUDE.md`, renamed 2026-09-19): the two-front-ends rule, where logic may and may not live, how to run the tests, and the parity requirement.
 - `README.md` finished with the Layout block and "Where your data lives".
 - This plan updated in place with what actually happened per stage.
 

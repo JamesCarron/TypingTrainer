@@ -39,13 +39,15 @@ class Text:
                 continue  # ignore empty lines
             new_contents += subdivide_line(line.strip(), line_len_limit, split_type)
 
-        for line in new_contents:
-            line = line.strip()  # remove any white space at the start or end of a line
-            sub(
-                r"[\s]{2,}", " ", line
-            )  # replace any occurrence of two or more spaces with a single space.
-
-        return new_contents
+        # Fixed 2026-09-19: both of these used to throw their result away --
+        # the loop rebound a local and never wrote back -- so the collapse this
+        # docstring promises never happened. On the bundled Art of War it makes
+        # no difference (444 lines before and after, no line changed), because
+        # that text has no doubled internal spaces; it matters for a text the
+        # user adds.
+        return [
+            sub(r"[\s]{2,}", " ", line.strip()) for line in new_contents
+        ]
 
     def load(self, texts_dir):
         with open(path.join(texts_dir, self.loc)) as file:

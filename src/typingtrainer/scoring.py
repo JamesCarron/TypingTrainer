@@ -52,8 +52,18 @@ def typing_score(guess, answer, total_time):
     # Compare user input to given sentence character by character
     matches = compare_lines(guess, answer)
     correct_chars = sum(matches)
-    accuracy = round(correct_chars / len(answer), 4)  # 100.00% aka 1.0000
-    wpm = round(correct_chars * 60 / (5 * total_time), 2)  # Calculate words per minute
+    # An empty target line used to raise ZeroDivisionError here. Fixed
+    # 2026-09-19: an empty guess against an empty target is perfect, anything
+    # typed against an empty target is not. Reachable only through a corpus
+    # with a blank line, but it crashed the attempt when it happened.
+    if not answer:
+        accuracy = 1.0 if not guess else 0.0
+    else:
+        accuracy = round(correct_chars / len(answer), 4)  # 100.00% aka 1.0000
+    # Guarded for the same reason: a zero duration is not a human typing.
+    wpm = (
+        round(correct_chars * 60 / (5 * total_time), 2) if total_time else 0.0
+    )  # Calculate words per minute
     return {
         "matches": matches,
         "accuracy": accuracy,
@@ -63,14 +73,16 @@ def typing_score(guess, answer, total_time):
 
 
 def passing_grade(results, *, require_accuracy, min_accuracy, require_wpm, min_wpm):
-    """Determine if a typing attempt meets passing criteria.
+    """Determine whether a typing attempt meets the active pass criteria.
 
-    Copied exactly from Game.passing_grade in TypingTrainer.py, with the
-    per-instance settings (self.require_accuracy, self.min_accuracy,
-    self.require_wpm, self.min_wpm) passed in as keyword arguments instead of
-    read off `self`. Note the ValueError below only ever fires when
-    require_accuracy is truthy, since the check lives inside that branch in
-    the original code -- preserved as-is, not fixed.
+    Lifted from Game.passing_grade in the pre-refactor TypingTrainer.py, with
+    the per-instance settings passed in instead of read off ``self``.
+
+    One deliberate change from the original, made 2026-09-19: the
+    "accuracy above 100%" sanity check used to sit *inside* the
+    ``require_accuracy`` branch, so an impossible score sailed through
+    whenever that criterion happened to be switched off. It is a check on the
+    scorer, not on the criterion, so it now runs either way.
 
     Args:
         results: Dictionary containing 'accuracy' and 'wpm' keys
@@ -80,16 +92,16 @@ def passing_grade(results, *, require_accuracy, min_accuracy, require_wpm, min_w
         min_wpm: minimum WPM required to pass, when require_wpm is set
 
     Returns:
-        bool: True if all active criteria are met, False otherwise
+        bool: True if every active criterion is met, False otherwise
 
     Raises:
-        ValueError: If require_accuracy is set and accuracy exceeds 100%
+        ValueError: if accuracy exceeds 100%, which means the scorer is wrong
     """
-    if require_accuracy:
-        if results["accuracy"] > 1:
-            raise ValueError(f"results['accuracy'] > 100% - {results['accuracy']:=}")
-        if results["accuracy"] < min_accuracy:
-            return False
+    if results["accuracy"] > 1:
+        raise ValueError(f"results['accuracy'] > 100% - {results['accuracy']:=}")
+
+    if require_accuracy and results["accuracy"] < min_accuracy:
+        return False
 
     if require_wpm and results["wpm"] < min_wpm:
         return False
