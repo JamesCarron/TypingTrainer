@@ -40,6 +40,9 @@ class Game:
         self.user_input_full = ""
         self.results_str = ""
         self.time_start = datetime.now()
+        # Per-keystroke record for the analysis; see history.append_attempt. The web
+        # view captures the same list, so both front ends feed one dataset.
+        self.keystrokes = []
 
         self._set_icon()
         self._build_menu()
@@ -77,6 +80,7 @@ class Game:
         self.require_wpm_var = tk.BooleanVar(value=s.require_wpm)
         self.show_criteria_var = tk.BooleanVar(value=s.show_criteria)
         self.flash_on_mistake_var = tk.BooleanVar(value=s.flash_on_mistake)
+        self.stop_on_error_var = tk.BooleanVar(value=s.stop_on_error)
         criteria_menu.add_checkbutton(
             label="Show Criteria",
             variable=self.show_criteria_var,
@@ -101,6 +105,13 @@ class Game:
             variable=self.flash_on_mistake_var,
             command=lambda: self._apply_setting(
                 flash_on_mistake=self.flash_on_mistake_var.get()
+            ),
+        )
+        criteria_menu.add_checkbutton(
+            label="Stop on Mistake",
+            variable=self.stop_on_error_var,
+            command=lambda: self._apply_setting(
+                stop_on_error=self.stop_on_error_var.get()
             ),
         )
         criteria_menu.add_separator()
@@ -298,6 +309,7 @@ class Game:
         if self.session.state == "READY":
             self.user_input = ""
             self.user_input_full = ""
+            self.keystrokes = []
             self.instructions["text"] = "Press Enter to start."
             self.prev_btn.config(takefocus=1)
             self.next_btn.config(takefocus=1)
@@ -354,16 +366,26 @@ class Game:
                 self.time_start = datetime.now()
             target_line = self.session.current_line()
             next_index = len(self.user_input)
-            if (
-                self.session.settings.flash_on_mistake
-                and next_index < len(target_line)
-                and event.char
-                and event.char != target_line[next_index]
-            ):
+            correct = next_index < len(target_line) and event.char == target_line[next_index]
+            if self.session.settings.flash_on_mistake and event.char and not correct:
                 self.flash_mistake()
+            if self.session.settings.stop_on_error and event.char and not correct:
+                # Stop-on-error: the wrong character is simply not accepted, so the
+                # typist cannot run ahead of their own accuracy. Still recorded, or
+                # the analysis would never see the mistakes this mode prevents.
+                self._record_keystroke(event.char, correct)
+                self.draw_textbox()
+                return
+            if event.char:
+                self._record_keystroke(event.char, correct)
             self.user_input += event.char
             self.user_input_full += event.char
             self.draw_textbox()
+
+    def _record_keystroke(self, char, correct):
+        """One entry of the per-line keystroke record, ms from the first keypress."""
+        ms = (datetime.now() - self.time_start).total_seconds() * 1000.0
+        self.keystrokes.append({"char": char, "ms": round(ms, 1), "correct": bool(correct)})
 
     def submit(self):
         """Hand the line to the engine and show what it said."""
@@ -374,6 +396,7 @@ class Game:
             duration,
             typed_full=self.user_input_full,
             when=self.time_start,
+            keystrokes=self.keystrokes,
         )
         if result.passed:
             self.results_str = f"Wpm: {result.wpm:.0f}, Acc: {result.accuracy:.1%}"
@@ -381,6 +404,7 @@ class Game:
             self.results_str = f"FAIL - Acc: {result.accuracy:.0%}, {result.wpm:.0f} wpm."
         self.user_input = ""
         self.user_input_full = ""
+        self.keystrokes = []
         self.time_start = datetime.now()
         self.instructions["text"] = (
             f"Press Enter to finish or Esc to exit. Prev: {self.results_str}"

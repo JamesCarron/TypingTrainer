@@ -164,13 +164,21 @@ class Session:
 
     # ---- the scoring path --------------------------------------------------
 
-    def submit_line(self, typed: str, duration: float, typed_full=None, when=None) -> AttemptResult:
+    def submit_line(
+        self, typed: str, duration: float, typed_full=None, when=None, keystrokes=None
+    ) -> AttemptResult:
         """Score one line, log it, advance on a pass, and persist.
 
         ``typed_full`` is the raw keystroke record including characters that were
         later deleted, kept because the old history recorded it. ``when`` is the
         attempt's start time, supplied by the caller for the same reason the
         duration is: the engine does not read the clock.
+
+        ``keystrokes`` is the instrumentation added 2026-09-19: a list of
+        ``{"char", "ms", "correct"}`` in press order, ``ms`` from the first key of
+        the line. It is what makes per-key and bigram latency possible, and it
+        cannot be reconstructed later, so a view that can capture it should. A
+        view that cannot simply omits it.
         """
         if self.state != "GAME":
             raise RuntimeError(f"submit_line is only legal in GAME, not {self.state}")
@@ -196,8 +204,10 @@ class Session:
                 "user_input": typed,
                 "user_input_full": typed_full if typed_full is not None else typed,
                 "Passed": passed,
+                "LineIndex": self._text.position,
             },
             key=started.isoformat(),
+            keystrokes=keystrokes,
         )
         if passed:
             self._text.position += 1

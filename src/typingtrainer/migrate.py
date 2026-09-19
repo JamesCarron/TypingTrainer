@@ -4,9 +4,9 @@ Written 2026-09-19 for the "Paths and migration" stream of the repo's stage 4 re
 (see docs/Refactor_Plan.md). Reads the repo's SaveGame.pickleddict (a pickled dict of the
 form {"Texts": {name: {"line": int}}, "History": {datetime: {record}}}, produced by the
 old Game.save_game) and config.json (six settings), and writes settings.json,
-history.json and positions.json into paths.state_dir() via config.py and history.py.
+settings.json and the SQLite attempt store in paths.state_dir(), via config.py and history.py.
 
-This is a format conversion (pickle -> JSON, datetime keys -> ISO-8601 strings), not a
+This is a format conversion (pickle -> SQLite, datetime keys -> ISO-8601 strings), not a
 move, so it is verified by comparing record counts on both sides, never by comparing
 bytes. It never deletes the source files -- that is left to the human, after they have
 looked at the printed counts. Verified by tests/test_migrate.py against a small
@@ -23,7 +23,7 @@ from . import config, history, paths
 
 
 class MigrationRefused(RuntimeError):
-    """Raised when history.json already holds data and --force was not given."""
+    """Raised when the store already holds attempts and --force was not given."""
 
 
 def _load_pickle(save_path: Path) -> dict:
@@ -46,7 +46,7 @@ def migrate(
     config_path: Path | None = None,
     force: bool = False,
 ) -> dict:
-    """Convert the pickle + config.json into the new state-dir JSON files.
+    """Convert the pickle + config.json into the new state dir.
 
     Returns a dict of {"source_history_count", "source_texts_count", "written_history_count"}
     for the caller to print/verify. Raises MigrationRefused if history.json already has
@@ -62,7 +62,7 @@ def migrate(
     existing_history = history.read_attempts()
     if existing_history and not force:
         raise MigrationRefused(
-            f"{history.history_path()} already has {len(existing_history)} record(s); "
+            f"{history.db_path()} already has {len(existing_history)} record(s); "
             "pass --force to overwrite."
         )
 
@@ -76,23 +76,24 @@ def migrate(
     settings = config.Settings.from_dict(config_data)
     config.save(settings)
 
-    # History: datetime keys (or any non-string key) become ISO-8601 strings so the
-    # file is JSON-safe; string keys already produced by a prior migration pass through.
-    converted_history = {}
+    # History: datetime keys (or any non-string key) become ISO-8601 strings, which
+    # is what the store keys on; string keys from a prior pass go through unchanged.
+    # These records predate the keystroke instrumentation and have none, so every
+    # timing analysis skips them rather than inventing numbers for them.
+    if force:
+        history.clear_history()
+    written = 0
     for key, record in source_history.items():
         key_str = key.isoformat() if hasattr(key, "isoformat") else str(key)
-        converted_history[key_str] = record
-    history._write_json(history.history_path(), converted_history)
+        history.append_attempt(record, key=key_str)
+        written += 1
 
     # Positions: flatten {"Texts": {name: {"line": n}}} to {name: n}.
-    positions = {
-        name: info.get("line", 0) if isinstance(info, dict) else info
-        for name, info in source_texts.items()
-    }
-    history._write_json(history.positions_path(), positions)
+    for name, info in source_texts.items():
+        history.set_position(name, info.get("line", 0) if isinstance(info, dict) else info)
 
     return {
         "source_history_count": len(source_history),
         "source_texts_count": len(source_texts),
-        "written_history_count": len(converted_history),
+        "written_history_count": written,
     }

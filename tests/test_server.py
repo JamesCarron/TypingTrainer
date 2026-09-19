@@ -251,6 +251,8 @@ def test_settings_round_trip(running_server):
         "min_wpm",
         "show_criteria",
         "flash_on_mistake",
+        "stop_on_error",
+        "live_stats",
     }
 
     status, payload = _post(running_server, "/api/settings", {"min_wpm": 42.0})

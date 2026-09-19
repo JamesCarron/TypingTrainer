@@ -29,6 +29,10 @@ class Settings:
     min_wpm: float = 20.0
     show_criteria: bool = True
     flash_on_mistake: bool = True
+    # Added 2026-09-19 with the UI refresh. Off by default: it changes how the
+    # app feels to use, and the pass criteria already enforce accuracy per line.
+    stop_on_error: bool = False
+    live_stats: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -40,6 +44,8 @@ class Settings:
             min_wpm=float(data.get("min_wpm", defaults.min_wpm)),
             show_criteria=bool(data.get("show_criteria", defaults.show_criteria)),
             flash_on_mistake=bool(data.get("flash_on_mistake", defaults.flash_on_mistake)),
+            stop_on_error=bool(data.get("stop_on_error", defaults.stop_on_error)),
+            live_stats=bool(data.get("live_stats", defaults.live_stats)),
         )
 
 
