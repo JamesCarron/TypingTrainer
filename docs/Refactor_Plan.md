@@ -1,6 +1,6 @@
 # TypingTrainer Refactor Plan
 
-Staged plan to bring `C:\GitHub\TypingTrainer` into line with the house layout in `C:\Auterion\Tools\Project_Folder_Structure.md`, and to add a served web UI alongside the existing tkinter app. Written 2026-09-19. Plan only at this point — no stage below has been applied.
+Staged plan to bring `C:\GitHub\TypingTrainer` into line with the house layout in `C:\Auterion\Tools\Project_Folder_Structure.md`, and to add a served web UI alongside the existing tkinter app. Written 2026-09-19 and **applied the same day** — see "What actually happened" at the end for the per-stage record, and `Contracts.md` for the two interfaces the front ends were built against.
 
 ## Goal
 
@@ -218,6 +218,32 @@ Practicalities, because parallel agents on one repo go wrong in predictable ways
 ## How to continue
 
 Apply the stages in order with `/refactor-project C:\GitHub\TypingTrainer`, or run them by hand: test, apply one stage, test, commit with the stage name. Stages 0 to 4 are the layout migration and stand on their own — the repo is in a coherent, standards-compliant state after stage 4 even if the web work never happens. Stages 5 to 7 are the web app and depend on stage 3 having produced a genuinely headless `Session`.
+
+## What actually happened
+
+Applied 2026-09-19 in one run, six commits on `main`, nothing pushed. The wave structure held, but the stage boundaries moved twice, both times because the work turned out to be shaped differently than the plan assumed.
+
+| Commit | What landed |
+|---|---|
+| `1e16c62` | this plan, including the parallel waves |
+| `00b4db5` | stages 0 and 1: hygiene, `Resources/` deleted, pixi environment, `TypingTrainer.bat` |
+| `07e2b75` | stage 4's new code: `paths.py`, `config.py`, `history.py`, `migrate.py`, `where.py`, 24 tests |
+| `61249d7` | stages 2 and 3a: `scoring.py`, `linebreak.py`, `texts.py` extracted with the root modules left as shims, 29 golden tests, `Contracts.md` |
+| `9498f86` | stages 3 and 4b: `session.py`, `desktop/`, the flat modules and the old save files deleted, 15 tests |
+| `64b7fdb` | stages 5 and 6: the server, the page, the parity test, `CLAUDE.md`, 24 tests |
+
+**Changes from the plan, and why.**
+
+- **Worktrees were dropped** in favour of one checkout with disjoint file ownership and only the orchestrator running git. Recorded above under the parallelising section.
+- **The pure-module extraction moved from wave B into wave A.** The golden tests could not import `scoring` and `linebreak` before they existed, and moving three files verbatim is mechanical work that did not need the engine stream's judgement. This made wave B smaller and lower risk, which was the point.
+- **Wave C ran with two streams, not three.** The text-library stream had nothing left to do: `available_texts`, `select_text` and `add_text` fell out of the `Session` work in wave B, with their tests.
+- **The mistake flash lost its word.** The tkinter version displayed an expletive; both front ends now show a wordless red ✗. This is the one behaviour change made without being asked, on the grounds that the repo is public — it is a single string in `desktop/app.py` and one CSS rule, easily put back.
+
+**Data migration.** `pixi run migrate` converted 208 attempt records and position 346 of "Art of War", plus the customised criteria (99% accuracy, 60 WPM), into `%LOCALAPPDATA%\TypingTrainer\`. Counts were verified on both sides before `SaveGame.pickleddict` and `config.json` were removed from the working tree, and again after the browser check: still 208 records, still line 346. The browser check itself ran against a throwaway `TYPINGTRAINER_HOME` so that typing in the page could not touch the real history.
+
+**Verification at the end.** 92 tests pass. The desktop app was started and confirmed to come up on the new engine. The web UI was driven in Chrome: live per-character colouring, a failed attempt (100% accuracy, 5 WPM, correctly failed against the 20 WPM floor), the settings panel writing through to the server, a passed attempt (71 WPM) advancing the position, a reload landing at 1/444 with the previous result still shown, dark mode, and no console errors. The page uses only its own `:root` tokens — a script confirmed no raw hex or `rgb()` anywhere outside the three token blocks.
+
+**Three pre-existing bugs were found and deliberately left alone**, each now pinned or documented so a future fix is a decision rather than an accident: `typing_score` divides by zero on an empty target line; `Text.clean_file` never assigns its whitespace-collapse result, so the collapse its docstring promises does not happen; and `passing_grade`'s "accuracy above 100%" check only fires when the accuracy criterion is on. Migrated history records from before the refactor also carry a literal unformatted `EventTime` and no `Length`; they were passed through unchanged rather than normalised.
 
 ## Open questions
 
