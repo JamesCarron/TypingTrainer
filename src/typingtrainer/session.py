@@ -75,6 +75,10 @@ class Session:
         self.state = "READY"
         self.last_result = None
         self._text = None
+        #: Set by ``start_drill`` to the drill line currently being typed, else
+        #: None. See ``start_drill`` for why this exists and how small the
+        #: change is kept.
+        self._drill_line = None
         self.select_text(text_name or self._default_text_name())
 
     # ---- text library -----------------------------------------------------
@@ -100,6 +104,7 @@ class Session:
         text.position = min(max(history.get_position(name, 0), 0), max(len(text), 0))
         self._text = text
         self.last_result = None
+        self._drill_line = None
         self.set_state("READY")
 
     def add_text(self, source_path) -> str:
@@ -137,7 +142,14 @@ class Session:
         return self._text.position / self.line_count if self.line_count else 0.0
 
     def current_line(self) -> str:
-        """The line to type now; empty string past the end rather than an IndexError."""
+        """The line to type now; empty string past the end rather than an IndexError.
+
+        A drill in progress (``start_drill``) overrides this unconditionally --
+        the book position underneath is untouched, it is just not what the
+        player is typing for the duration of the drill attempt.
+        """
+        if self._drill_line is not None:
+            return self._drill_line
         if 0 <= self._text.position < self.line_count:
             return self._text.contents[self._text.position]
         return ""
@@ -159,8 +171,45 @@ class Session:
         self.set_state("GAME")
 
     def abort(self) -> None:
-        """GAME -> READY, discarding the attempt without logging it (the Esc path)."""
+        """GAME -> READY, discarding the attempt without logging it (the Esc path).
+
+        Also cancels a drill in progress, if any -- an abandoned drill is not
+        logged (nothing was submitted) and must not leave the session stuck
+        typing a line that is not in the book.
+        """
+        self._drill_line = None
         self.set_state("READY")
+
+    def start_drill(self, line: str) -> None:
+        """Make ``line`` the target for exactly one attempt, without touching the book.
+
+        Added 2026-09-19 for the improvement loop (docs/UI_Refresh_Notes.md,
+        Proposal C, "Turning analysis into improvement"): a drill line from
+        ``drills.generate_drill``, or a hard line from ``drills.find_hard_line``
+        that the player wants to rehearse before it is reached, needs a target
+        that is not a step through the book -- typing it must never move
+        ``self._text.position`` or call ``history.set_position``, and it must
+        not linger past one submitted attempt.
+
+        This is the smallest change that gets there: one optional override
+        (``self._drill_line``), consulted by ``current_line()`` in place of the
+        book's current line, and cleared unconditionally -- pass or fail -- at
+        the end of ``submit_line`` once that one attempt has been scored. No
+        second state, no stack, no change to ``visible_lines`` or the book
+        position at all. ``submit_line`` marks the logged record
+        ``"Drill": True`` instead of advancing position, so a drill attempt is
+        indistinguishable from a book attempt everywhere except that one field.
+
+        Puts the session in GAME (the drill is typed immediately), which also
+        means calling this while a book line is mid-attempt discards that
+        attempt the same way ``abort()`` would -- there is only ever one
+        current target.
+        """
+        if not isinstance(line, str) or not line.strip():
+            raise ValueError("drill line must be a non-empty string")
+        self._drill_line = line
+        self.last_result = None
+        self.set_state("GAME")
 
     # ---- the scoring path --------------------------------------------------
 
@@ -183,6 +232,7 @@ class Session:
         if self.state != "GAME":
             raise RuntimeError(f"submit_line is only legal in GAME, not {self.state}")
         target = self.current_line()
+        is_drill = self._drill_line is not None
         scored = typing_score(typed, target, duration)
         passed = passing_grade(
             scored,
@@ -192,24 +242,32 @@ class Session:
             min_wpm=self.settings.min_wpm,
         )
         started = when or datetime.now()
+        record = {
+            "EventTime": f"{started:%d-%m-%Y %H:%M:%S}",
+            "TextName": self.text_name,
+            "Length": len(target),
+            "Duration": scored["duration"],
+            "Accuracy": scored["accuracy"],
+            "Wpm": scored["wpm"],
+            "Answer": target,
+            "user_input": typed,
+            "user_input_full": typed_full if typed_full is not None else typed,
+            "Passed": passed,
+            "LineIndex": self._text.position,
+        }
+        # Marked rather than folded into TextName, so a drill is a real,
+        # analysable attempt but never confused with a book line -- see
+        # start_drill's docstring.
+        if is_drill:
+            record["Drill"] = True
         history.append_attempt(
-            {
-                "EventTime": f"{started:%d-%m-%Y %H:%M:%S}",
-                "TextName": self.text_name,
-                "Length": len(target),
-                "Duration": scored["duration"],
-                "Accuracy": scored["accuracy"],
-                "Wpm": scored["wpm"],
-                "Answer": target,
-                "user_input": typed,
-                "user_input_full": typed_full if typed_full is not None else typed,
-                "Passed": passed,
-                "LineIndex": self._text.position,
-            },
+            record,
             key=started.isoformat(),
             keystrokes=keystrokes,
         )
-        if passed:
+        # A drill never advances the book position, pass or fail -- it is
+        # practice, not progress through the text.
+        if passed and not is_drill:
             self._text.position += 1
             history.set_position(self.text_name, self._text.position)
         result = AttemptResult(
@@ -223,6 +281,11 @@ class Session:
             position=self._text.position,
         )
         self.last_result = result
+        # One attempt is the whole life of a drill -- clear it unconditionally
+        # so the very next current_line() is back to the book, right where it
+        # was.
+        if is_drill:
+            self._drill_line = None
         return result
 
     # ---- moving about ------------------------------------------------------
@@ -276,6 +339,8 @@ class Session:
             "progress": self.progress,
             "visible_lines": self.visible_lines(),
             "current_line": self.current_line(),
+            "in_drill": self._drill_line is not None,
+            "drill_line": self._drill_line,
             "settings": asdict(self.settings),
             "texts": [
                 {"name": name, "source": source}

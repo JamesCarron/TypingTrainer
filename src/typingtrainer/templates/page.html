@@ -61,6 +61,7 @@
       <button id="add-text-btn" type="button" class="secondary">Add text&hellip;</button>
       <button id="reset-history-btn" type="button" class="secondary">Reset history</button>
       <button id="settings-btn" type="button" class="secondary">Settings</button>
+      <button id="finish-session-btn" type="button" class="secondary">Finish session</button>
     </div>
 
     <div id="settings-panel" hidden>
@@ -101,9 +102,25 @@
     </div>
 
     <footer class="app-footer chrome-fade">
-      Enter: start / submit line &middot; Esc: abandon line &middot; Ctrl+Backspace: delete last
-      word &middot; Backspace: delete a character
+      Enter: start / submit line &middot; Esc: abandon line (or, at READY, finish the session)
+      &middot; Ctrl+Backspace: delete last word &middot; Backspace: delete a character
     </footer>
+  </div>
+
+  <!--
+    Session summary -- Monkeytype's results screen moved to the session
+    cadence (docs/UI_Refresh_Notes.md, decision 4). Shown by "Finish session"
+    or by Esc while READY; never after a single line. Dismissing it returns
+    to the typing screen unchanged -- it reads /api/session_summary but
+    submits nothing.
+  -->
+  <div id="session-summary-overlay" class="overlay" hidden>
+    <div id="session-summary" class="session-summary" role="dialog" aria-label="Session summary">
+      <button id="session-summary-close" type="button" class="overlay-close" aria-label="Close">&times;</button>
+      <h2>Session summary</h2>
+      <div id="session-summary-body">Loading&hellip;</div>
+      <p class="session-summary-link"><a id="session-summary-stats-link" href="/stats" target="_blank" rel="noopener">Open full stats &rarr;</a></p>
+    </div>
   </div>
 
   <script>

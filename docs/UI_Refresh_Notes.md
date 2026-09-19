@@ -109,6 +109,16 @@ The analysis is pure functions over history records, so it belongs in the engine
 
 One storage decision falls out: JSON history is fine at 208 records and fine at 2,000, but keystroke lists at 10,000 lines is tens of megabytes read and rewritten on every attempt. SQLite is the obvious answer if keystroke capture goes ahead.
 
+## What the real data turned out to look like
+
+Measured against a copy of the real store on 2026-09-19, once the stats page could render it. Two things that change what to build next.
+
+**The weak-point analysis is starved, and not because the code is wrong.** Across 209 attempts and 20,566 lowercase characters there are eight mistyped characters in total. The reason is the criteria: with a 99% accuracy floor, a line is retyped until it is right, so the *submitted* text is almost always perfect and the mistakes never reach the store. Error categories still ranked quotes worst (5% of 20 seen) and punctuation next (0.4% of 934), which is a genuine finding, but it rests on single-digit counts. The signal is not missing — it is in the keystrokes, which now record every character pressed including the ones deleted and the ones stop-on-error refused. The fix is to derive the confusion pairs from the keystroke stream rather than from the final submitted text.
+
+That needs one more field. A keystroke currently records what was pressed and whether it was correct, but not what was *expected*, and the expected character cannot be reconstructed afterwards: backspaces are deliberately not recorded, so the position at any given press is ambiguous. Adding `expected` to each keystroke entry — known for free at press time in both front ends — turns "you type r when you mean e" from a statistic over eight events into one over every mistake ever made, corrected or not. Do this before collecting much more data, for the same reason the keystroke capture went first.
+
+**One corrupt legacy record was distorting every aggregate.** An attempt stored 1236 wpm with an empty `user_input`, an accuracy of 0.0 and a suspiciously round 1.0 s duration — internally inconsistent, from a code path that no longer exists. It was setting the all-time top-speed tile and flattening the learning curve against its axis. `analysis._implausible` now excludes records above 300 wpm or with a non-positive duration from the aggregates and counts them; the row stays in the store, because nothing here rewrites history. Real top speed is 95.32 wpm, mean 67.44.
+
 ## Decisions (2026-09-19)
 
 All four settled at the end of the research session. They are ambitious on purpose: the whole set was chosen, not a subset.

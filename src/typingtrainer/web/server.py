@@ -34,10 +34,12 @@ import mimetypes
 import subprocess
 import sys
 import threading
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
+from .. import analysis, drills, history
 from ..session import Session, TextNotFound
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -169,6 +171,133 @@ def _clean_keystrokes(raw):
     return cleaned
 
 
+def _parse_event_time(value):
+    """Parse an ``EventTime`` string, defensively -- same formats history.py writes.
+
+    Duplicated (rather than importing analysis._parse_event_time) so this module
+    does not reach into another stream's private helpers; it is a handful of
+    lines and the formats are pinned by docs/Contracts.md's history shape.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%d-%m-%Y %H:%M:%S")
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+#: A session is a run of attempts with no gap between consecutive ones larger
+#: than this, ending at the most recent attempt overall -- see
+#: ``_api_session_summary``.
+SESSION_GAP = timedelta(minutes=30)
+
+
+def _current_session_attempts() -> list:
+    """The slice of ``history.iter_attempts()`` that makes up "the current session".
+
+    Walks backward from the most recent attempt; the session boundary is the
+    first gap (by ``EventTime``) larger than ``SESSION_GAP``, or an attempt
+    whose time cannot be parsed (treated as its own boundary, since a gap
+    cannot be measured to it). If no boundary is found the whole history is
+    one session. All texts are considered together, not just the current one.
+    """
+    attempts = history.iter_attempts()
+    if not attempts:
+        return []
+    start = 0
+    for i in range(len(attempts) - 1, 0, -1):
+        prev_t = _parse_event_time(attempts[i - 1][1].get("EventTime"))
+        cur_t = _parse_event_time(attempts[i][1].get("EventTime"))
+        if prev_t is None or cur_t is None or (cur_t - prev_t) > SESSION_GAP:
+            start = i
+            break
+    return attempts[start:]
+
+
+def _api_analysis(body, session: Session):
+    text_name = body.get("text") or None
+    return analysis.full_report(text_name=text_name)
+
+
+def _api_session_summary(body, session: Session):
+    """The attempts of the current session -- see ``_current_session_attempts``.
+
+    Enriches ``analysis.session_summary`` (which only returns aggregate tiles
+    plus a single best/worst line) with the full ordered WPM-per-line list, for
+    the session summary's sparkline; that series is not something
+    ``analysis.py`` returns, so it is assembled here from the same slice.
+    """
+    current = _current_session_attempts()
+    summary = analysis.session_summary(current)
+    summary["wpm_curve"] = [r.get("Wpm") for _key, r in current if r.get("Wpm") is not None]
+    return summary
+
+
+def _api_practice(body, session: Session):
+    """The improvement-loop plan: weak targets, a drill, hard lines, the watchlist,
+    and a criteria suggestion -- see ``drills.practice_plan``, the only store-touching
+    function in that module. Reads the whole store, so this is a page-load call, like
+    ``/api/analysis``, not a per-keystroke one."""
+    text_name = body.get("text") or None
+    return drills.practice_plan(text_name=text_name)
+
+
+def _api_drill(body, session: Session):
+    """Start a drill: make an arbitrary line (a generated drill, or a hard line
+    picked from the book) the target for the player's very next attempt, without
+    touching the book position or the saved text -- see ``Session.start_drill``."""
+    line = _require(body, "line")
+    if not isinstance(line, str):
+        raise ApiError(400, "line must be a string")
+    try:
+        session.start_drill(line)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from exc
+    return session.snapshot()
+
+
+def _api_criteria_apply(body, session: Session):
+    """Apply a ``drills.suggest_criteria`` proposal -- the engine only advises,
+    this is where the user consents. Refuses anything that would lower a
+    threshold below what is already set, since that is never what the
+    suggestion itself proposes and a request that does so is either stale or
+    wrong."""
+    from dataclasses import asdict
+
+    current = session.settings
+    updates = {}
+    if "min_wpm" in body:
+        try:
+            new_wpm = float(body["min_wpm"])
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, "min_wpm must be a number") from exc
+        if new_wpm < current.min_wpm:
+            raise ApiError(
+                400,
+                f"refusing to lower min_wpm from {current.min_wpm} to {new_wpm}",
+            )
+        updates["min_wpm"] = new_wpm
+    if "min_accuracy" in body:
+        try:
+            new_accuracy = float(body["min_accuracy"])
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, "min_accuracy must be a number") from exc
+        if new_accuracy < current.min_accuracy:
+            raise ApiError(
+                400,
+                f"refusing to lower min_accuracy from {current.min_accuracy} to {new_accuracy}",
+            )
+        updates["min_accuracy"] = new_accuracy
+    if not updates:
+        raise ApiError(400, "expected min_wpm and/or min_accuracy")
+    new_settings = session.update_settings(**updates)
+    return asdict(new_settings)
+
+
 def _api_position(body, session: Session):
     if "delta" in body:
         try:
@@ -246,6 +375,11 @@ def _api_pick_path(body, session: Session):
 # (method, path) -> (handler, needs_body)
 ROUTES = {
     ("GET", "/api/state"): _api_state,
+    ("GET", "/api/analysis"): _api_analysis,
+    ("GET", "/api/session_summary"): _api_session_summary,
+    ("GET", "/api/practice"): _api_practice,
+    ("POST", "/api/drill"): _api_drill,
+    ("POST", "/api/criteria/apply"): _api_criteria_apply,
     ("GET", "/api/texts"): _api_texts,
     ("POST", "/api/text"): _api_text,
     ("POST", "/api/start"): _api_start,
@@ -279,17 +413,34 @@ def _dispatch(server: "TypingTrainerServer", method: str, path: str, body: dict)
             return 400, {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def _assemble_page() -> str | None:
-    """The page as one string, or None if the front end's files are not there yet."""
-    page = TEMPLATES_DIR / "page.html"
-    css = STATIC_DIR / "page.css"
-    js = STATIC_DIR / "page.js"
+def _assemble_from_files(page: Path, css: Path, js: Path) -> str | None:
+    """One page as a string, filling ``{{CSS}}``/``{{JS}}`` from the given files.
+
+    Shared by ``_assemble_page`` (``GET /``) and ``_assemble_stats_page``
+    (``GET /stats``) -- same read-fresh-every-request approach, so either
+    front-end stream can edit its files and just refresh the browser. Returns
+    None, degrading to a 503, if any of the three files is not there yet.
+    """
     if not (page.is_file() and css.is_file() and js.is_file()):
         return None
     html = page.read_text(encoding="utf-8")
     html = html.replace("{{CSS}}", css.read_text(encoding="utf-8"))
     html = html.replace("{{JS}}", js.read_text(encoding="utf-8"))
     return html
+
+
+def _assemble_page() -> str | None:
+    """The typing page as one string, or None if its front-end files are missing."""
+    return _assemble_from_files(
+        TEMPLATES_DIR / "page.html", STATIC_DIR / "page.css", STATIC_DIR / "page.js"
+    )
+
+
+def _assemble_stats_page() -> str | None:
+    """The /stats page as one string, or None if its front-end files are missing."""
+    return _assemble_from_files(
+        TEMPLATES_DIR / "stats.html", STATIC_DIR / "stats.css", STATIC_DIR / "stats.js"
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -354,7 +505,8 @@ class Handler(BaseHTTPRequestHandler):
     # -- verbs ------------------------------------------------------------------------
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        parsed = urlsplit(self.path)
+        path = parsed.path
         if path == "/":
             html = _assemble_page()
             if html is None:
@@ -366,11 +518,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_text(200, html, content_type="text/html")
             return
+        if path == "/stats":
+            html = _assemble_stats_page()
+            if html is None:
+                self._send_text(
+                    503,
+                    "The TypingTrainer stats page is not built yet "
+                    "(templates/stats.html, static/stats.css and static/stats.js).",
+                )
+                return
+            self._send_text(200, html, content_type="text/html")
+            return
         if path.startswith("/static/"):
             self._serve_static(path[len("/static/") :])
             return
+        # GET query params (e.g. /api/analysis?text=...) become the "body" dict
+        # handed to the route -- GET has no JSON body, and this keeps every
+        # handler's signature the same regardless of verb.
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         try:
-            status, payload = _dispatch(self.server, "GET", path, {})
+            status, payload = _dispatch(self.server, "GET", path, query)
         except ApiError as exc:
             status, payload = exc.status, {"error": exc.message}
         self._send_json(status, payload)

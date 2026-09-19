@@ -1,0 +1,431 @@
+/*
+ * stats.css -- the analysis dashboard. Same token system as page.css (this is
+ * a personal public repo, not a house style: see CLAUDE.md), light and dark
+ * via prefers-color-scheme plus a data-theme override. Unlike the typing
+ * page, this page is a dashboard: surfaces, borders and tables are fine here.
+ *
+ * Written 2026-09-19 for the "analysis UI" stream of the UI refresh
+ * (docs/UI_Refresh_Notes.md).
+ */
+
+:root {
+  --tt-ink: #1b1f23;
+  --tt-ink-secondary: #5b6470;
+  --tt-sub: #9aa2ad;
+  --tt-bg: #f5f6f8;
+  --tt-surface: #ffffff;
+  --tt-line: #d7dbe1;
+  --tt-accent: #1f8a8a;
+  --tt-on-accent: #ffffff;
+  --tt-incorrect: #c62f2f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-ink: #eaedf1;
+    --tt-ink-secondary: #a4acb8;
+    --tt-sub: #565e68;
+    --tt-bg: #14171a;
+    --tt-surface: #1d2124;
+    --tt-line: #333941;
+    --tt-accent: #3fb8b8;
+    --tt-on-accent: #0c1112;
+    --tt-incorrect: #ff6b6b;
+  }
+}
+
+:root[data-theme="dark"] {
+  --tt-ink: #eaedf1;
+  --tt-ink-secondary: #a4acb8;
+  --tt-sub: #565e68;
+  --tt-bg: #14171a;
+  --tt-surface: #1d2124;
+  --tt-line: #333941;
+  --tt-accent: #3fb8b8;
+  --tt-on-accent: #0c1112;
+  --tt-incorrect: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--tt-bg);
+  color: var(--tt-ink);
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.stats-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+.stats-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.stats-header h1 {
+  font-size: 26px;
+  margin: 0;
+}
+
+.stats-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.back-link {
+  color: var(--tt-accent);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+select {
+  background: var(--tt-surface);
+  color: var(--tt-ink);
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.load-error {
+  background: var(--tt-incorrect);
+  color: var(--tt-on-accent);
+  padding: 10px 14px;
+  border-radius: 6px;
+}
+
+.load-error[hidden] {
+  display: none;
+}
+
+.stats-section {
+  background: var(--tt-surface);
+  border: 1px solid var(--tt-line);
+  border-radius: 10px;
+  padding: 24px 28px;
+  margin-bottom: 24px;
+}
+
+.stats-section h2 {
+  margin: 0 0 6px;
+  font-size: 19px;
+}
+
+.section-note {
+  color: var(--tt-ink-secondary);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+.subsection {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--tt-line);
+}
+
+.subsection:first-of-type {
+  margin-top: 16px;
+}
+
+.subsection h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.empty-note {
+  color: var(--tt-ink-secondary);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ---- tiles --------------------------------------------------------------- */
+
+.tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.tile {
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.tile-value {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.tile-label {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--tt-ink-secondary);
+}
+
+/* ---- tables ---------------------------------------------------------------- */
+
+table.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.stats-table th,
+table.stats-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--tt-line);
+}
+
+table.stats-table th {
+  color: var(--tt-ink-secondary);
+  font-weight: 500;
+}
+
+table.stats-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+/* ---- bar charts (hand-written inline SVG / divs) --------------------------- */
+
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 60px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.bar-row .bar-label {
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-line);
+  border-radius: 3px;
+  height: 14px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  background: var(--tt-accent);
+  height: 100%;
+}
+
+.bar-fill.bar-fill-error {
+  background: var(--tt-incorrect);
+}
+
+.bar-row .bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--tt-ink-secondary);
+}
+
+/* ---- keyboard heatmap -------------------------------------------------------- */
+
+.keyboard-heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 720px;
+}
+
+.kb-row {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-key {
+  position: relative;
+  min-width: 44px;
+  height: 44px;
+  flex: 1 1 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--tt-line);
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-size: 13px;
+  color: var(--tt-ink);
+  cursor: default;
+}
+
+.kb-key.kb-space {
+  flex: 6 1 auto;
+}
+
+.kb-key.kb-unseen {
+  background: var(--tt-bg);
+  color: var(--tt-sub);
+}
+
+/* Error-rate fill is set inline per key (background-color), computed in JS
+ * from the page's own error colour at varying opacity -- never a raw hex,
+ * see stats.js buildHeatmapColor(). */
+
+.kb-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--tt-ink-secondary);
+}
+
+.kb-legend-swatch {
+  width: 80px;
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(to right, var(--tt-bg), var(--tt-incorrect));
+  border: 1px solid var(--tt-line);
+}
+
+/* ---- practice ------------------------------------------------------------------ */
+
+.practice-drill-line {
+  display: inline-block;
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-size: 15px;
+  padding: 10px 14px;
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-line);
+  border-radius: 6px;
+  margin: 0 0 12px;
+}
+
+.practice-hard-line {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--tt-line);
+}
+
+.practice-hard-line:last-child {
+  border-bottom: none;
+}
+
+.practice-hard-line .practice-hard-line-text {
+  margin: 0 0 4px;
+}
+
+.practice-hard-line .section-note {
+  margin: 0 0 8px;
+}
+
+.practice-criteria-table {
+  margin-bottom: 12px;
+}
+
+button.practice-btn {
+  background: var(--tt-accent);
+  color: var(--tt-on-accent);
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button.practice-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+button.practice-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- calendar ---------------------------------------------------------------- */
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 14px);
+  gap: 3px;
+}
+
+.calendar-day {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--tt-line);
+  background: var(--tt-bg);
+}
+
+/* ---- inline SVG line charts --------------------------------------------------- */
+
+.line-chart {
+  width: 100%;
+  height: 180px;
+}
+
+.line-chart-axis {
+  stroke: var(--tt-line);
+  stroke-width: 1;
+}
+
+.line-chart-label {
+  fill: var(--tt-ink-secondary);
+  font-size: 10px;
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.line-chart-series {
+  fill: none;
+  stroke-width: 2;
+}
+
+.line-chart-series.wpm {
+  stroke: var(--tt-sub);
+}
+
+.line-chart-series.rolling {
+  stroke: var(--tt-accent);
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--tt-ink-secondary);
+  margin-top: 4px;
+}
+
+.chart-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}

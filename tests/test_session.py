@@ -196,6 +196,8 @@ def test_snapshot_has_everything_a_view_needs(sample):
         "progress",
         "visible_lines",
         "current_line",
+        "in_drill",
+        "drill_line",
         "settings",
         "texts",
         "last_result",

@@ -503,3 +503,61 @@ def test_full_report_shape_against_populated_store(isolated):
     assert filtered["data_coverage"]["total_attempts"] == 4
     empty = analysis.full_report(text_name="Nonexistent")
     assert empty["data_coverage"]["total_attempts"] == 0
+
+
+# --- implausible-record guard (added 2026-09-19 after the real history turned
+# --- up one corrupt row that set a fake personal best) -----------------------
+
+
+def _attempt(key, **fields):
+    record = {"TextName": "T", "Answer": "abc", "user_input": "abc"}
+    record.update(fields)
+    return (key, record)
+
+
+def test_overall_stats_excludes_an_impossible_wpm():
+    """The real store holds one 1236 wpm row with an empty input; it must not
+    become the personal best, and it must be counted as excluded."""
+    attempts = [
+        _attempt("2026-09-01T10:00:00", Wpm=70.0, Accuracy=1.0, Duration=5.0,
+                 EventTime="01-09-2026 10:00:00"),
+        _attempt("2026-09-01T10:01:00", Wpm=1236.0, Accuracy=0.0, Duration=1.0,
+                 user_input="", EventTime="01-09-2026 10:01:00"),
+    ]
+    stats = analysis.overall_stats(attempts, today=date(2026, 9, 1))
+    assert stats["top_wpm"] == 70.0
+    assert stats["mean_wpm"] == 70.0
+    assert stats["excluded_implausible"] == 1
+    # the attempt still happened, so it is still counted as one
+    assert stats["total_attempts"] == 2
+
+
+def test_overall_stats_excludes_a_zero_duration_attempt():
+    attempts = [
+        _attempt("k1", Wpm=60.0, Accuracy=1.0, Duration=4.0, EventTime="01-09-2026 10:00:00"),
+        _attempt("k2", Wpm=90.0, Accuracy=1.0, Duration=0.0, EventTime="01-09-2026 10:01:00"),
+    ]
+    stats = analysis.overall_stats(attempts, today=date(2026, 9, 1))
+    assert stats["top_wpm"] == 60.0
+    assert stats["excluded_implausible"] == 1
+
+
+def test_learning_curve_drops_implausible_points():
+    attempts = [
+        _attempt("k1", Wpm=70.0, Accuracy=1.0, Duration=5.0),
+        _attempt("k2", Wpm=1236.0, Accuracy=0.0, Duration=1.0),
+        _attempt("k3", Wpm=72.0, Accuracy=1.0, Duration=5.0),
+    ]
+    curve = analysis.learning_curve(attempts)
+    assert [p["wpm"] for p in curve["points"]] == [70.0, 72.0]
+    assert curve["skipped_implausible"] == 1
+    assert curve["skipped_missing_fields"] == 0
+
+
+def test_a_fast_but_plausible_attempt_is_kept():
+    """The guard must not quietly delete a genuinely good run."""
+    attempts = [_attempt("k1", Wpm=150.0, Accuracy=1.0, Duration=3.0,
+                         EventTime="01-09-2026 10:00:00")]
+    stats = analysis.overall_stats(attempts, today=date(2026, 9, 1))
+    assert stats["top_wpm"] == 150.0
+    assert stats["excluded_implausible"] == 0

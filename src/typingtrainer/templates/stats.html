@@ -1,0 +1,155 @@
+<!--
+  stats.html -- the analysis dashboard shell, served at GET /stats. Assembled
+  the same way as page.html: {{CSS}} and {{JS}} are literal placeholders the
+  server fills from static/stats.css and static/stats.js. Complete on its
+  own: no CDN, no external fonts, no network calls other than this page's own
+  /api/analysis.
+
+  Written 2026-09-19 for the "analysis UI" stream of the UI refresh
+  (docs/UI_Refresh_Notes.md, Proposal C / keybr reference). The skeleton here
+  is deliberately thin -- every section is filled in by static/stats.js from
+  GET /api/analysis, because the data is the point and a brand-new user with
+  zero attempts must still see a sensible page.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TypingTrainer &middot; Stats</title>
+  <style>
+{{CSS}}
+  </style>
+</head>
+<body>
+  <div class="stats-page">
+    <header class="stats-header">
+      <h1>Stats</h1>
+      <div class="stats-header-right">
+        <select id="text-filter" aria-label="Filter by text"></select>
+        <a href="/" class="back-link">&larr; Back to typing</a>
+      </div>
+    </header>
+
+    <p id="load-error" class="load-error" hidden></p>
+
+    <section id="section-tiles" class="stats-section">
+      <h2>All time</h2>
+      <div id="tiles" class="tiles-grid"></div>
+    </section>
+
+    <section id="section-weak-points" class="stats-section">
+      <h2>Weak points</h2>
+      <p class="section-note">What is actually costing you accuracy, ranked by how much it costs.</p>
+
+      <div class="subsection">
+        <h3>Confusions</h3>
+        <p class="section-note">You type the left character when you meant the right one.</p>
+        <div id="confusion-table"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Problem words</h3>
+        <div id="problem-words"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Error categories</h3>
+        <div id="error-categories"></div>
+      </div>
+    </section>
+
+    <section id="section-practice" class="stats-section">
+      <h2>Practice</h2>
+      <p class="section-note">Turning the diagnosis above into what to type next.</p>
+      <p id="practice-message" class="empty-note" hidden></p>
+
+      <div class="subsection" id="practice-targets-wrap">
+        <h3>Weak targets</h3>
+        <div id="practice-targets"></div>
+      </div>
+
+      <div class="subsection" id="practice-drill-wrap">
+        <h3>Drill</h3>
+        <p class="section-note">A synthetic line built around the weak targets above.</p>
+        <div id="practice-drill"></div>
+      </div>
+
+      <div class="subsection" id="practice-hard-lines-wrap">
+        <h3>Hard lines ahead</h3>
+        <p class="section-note">Upcoming lines from the book, dense in your weak targets -- practice that is also progress.</p>
+        <div id="practice-hard-lines"></div>
+      </div>
+
+      <div class="subsection" id="practice-trouble-words-wrap">
+        <h3>Trouble words</h3>
+        <div id="practice-trouble-words"></div>
+      </div>
+
+      <div class="subsection" id="practice-criteria-wrap">
+        <h3>Criteria</h3>
+        <div id="practice-criteria"></div>
+      </div>
+    </section>
+
+    <section id="section-heatmap" class="stats-section">
+      <h2>Keyboard heatmap</h2>
+      <p class="section-note">Each key tinted by its error rate on this book. Hover a key for its count.</p>
+      <div id="keyboard-heatmap" class="keyboard-heatmap"></div>
+    </section>
+
+    <section id="section-speed" class="stats-section">
+      <h2>Speed</h2>
+
+      <div class="subsection">
+        <h3>Slowest keys</h3>
+        <div id="slow-keys"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Slowest transitions (bigrams)</h3>
+        <p class="section-note">Everyone is fast on common pairs like "th"; these are <em>your</em> personal slow transitions.</p>
+        <div id="slow-bigrams"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Same-finger bigrams</h3>
+        <div id="same-finger"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Rhythm and stalls</h3>
+        <div id="rhythm"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Errors and timing</h3>
+        <div id="error-timing"></div>
+      </div>
+    </section>
+
+    <section id="section-progress" class="stats-section">
+      <h2>Progress</h2>
+
+      <div class="subsection">
+        <h3>Learning curve</h3>
+        <div id="learning-curve"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Attempts per line</h3>
+        <div id="attempts-per-line"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Practice calendar</h3>
+        <div id="calendar"></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+{{JS}}
+  </script>
+</body>
+</html>

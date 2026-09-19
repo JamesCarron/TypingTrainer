@@ -136,6 +136,10 @@ if (typeof window !== "undefined") {
       els.addTextBtn = $("add-text-btn");
       els.resetHistoryBtn = $("reset-history-btn");
       els.errorBar = $("error-bar");
+      els.finishSessionBtn = $("finish-session-btn");
+      els.sessionSummaryOverlay = $("session-summary-overlay");
+      els.sessionSummaryBody = $("session-summary-body");
+      els.sessionSummaryClose = $("session-summary-close");
 
       els.prevBtn.addEventListener("click", () => movePosition(-1));
       els.nextBtn.addEventListener("click", () => movePosition(1));
@@ -144,6 +148,11 @@ if (typeof window !== "undefined") {
       els.textPicker.addEventListener("change", onTextPicked);
       els.addTextBtn.addEventListener("click", onAddText);
       els.resetHistoryBtn.addEventListener("click", onResetHistory);
+      els.finishSessionBtn.addEventListener("click", showSessionSummary);
+      els.sessionSummaryClose.addEventListener("click", hideSessionSummary);
+      els.sessionSummaryOverlay.addEventListener("click", (event) => {
+        if (event.target === els.sessionSummaryOverlay) hideSessionSummary();
+      });
 
       for (const input of document.querySelectorAll("[data-setting]")) {
         input.addEventListener("change", onSettingChanged);
@@ -444,10 +453,21 @@ if (typeof window !== "undefined") {
 
       if (!snapshot) return;
 
+      if (!els.sessionSummaryOverlay.hidden) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          hideSessionSummary();
+        }
+        return;
+      }
+
       if (snapshot.state === "READY") {
         if (event.key === "Enter") {
           event.preventDefault();
           startLine();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          showSessionSummary();
         }
         return;
       }
@@ -664,6 +684,91 @@ if (typeof window !== "undefined") {
       } finally {
         focusTypingArea();
       }
+    }
+
+    // ---- session summary (docs/UI_Refresh_Notes.md, decision 4) -----------
+
+    function buildSparkline(values) {
+      if (!values || values.length < 2) return "";
+      const width = 600;
+      const height = 70;
+      const pad = 4;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+      const step = (width - pad * 2) / (values.length - 1);
+      const points = values
+        .map((v, i) => {
+          const x = pad + i * step;
+          const y = height - pad - ((v - min) / range) * (height - pad * 2);
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        })
+        .join(" ");
+      return (
+        `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" ` +
+        `aria-label="WPM per line across the session, from ${min.toFixed(0)} to ${max.toFixed(0)}">` +
+        `<polyline points="${points}" fill="none" stroke="var(--tt-accent)" stroke-width="2" />` +
+        `</svg>`
+      );
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text == null ? "" : String(text);
+      return div.innerHTML;
+    }
+
+    function renderSessionSummary(summary) {
+      if (!summary || summary.lines_completed === 0) {
+        els.sessionSummaryBody.innerHTML =
+          '<p class="summary-empty">No lines typed yet this session. Type a line, then come back.</p>';
+        return;
+      }
+      const wpm = summary.mean_wpm != null ? summary.mean_wpm.toFixed(0) : "–";
+      const acc =
+        summary.mean_accuracy != null ? (summary.mean_accuracy * 100).toFixed(1) + "%" : "–";
+      const best = summary.best_line
+        ? `${summary.best_line.wpm.toFixed(0)} wpm — "${escapeHtml(summary.best_line.line)}"`
+        : "–";
+      const worst = summary.worst_line
+        ? `${summary.worst_line.wpm.toFixed(0)} wpm — "${escapeHtml(summary.worst_line.line)}"`
+        : "–";
+      const minutes = (summary.duration_s / 60).toFixed(1);
+      const spark = buildSparkline(summary.wpm_curve);
+      els.sessionSummaryBody.innerHTML = `
+        <div class="summary-headline">
+          <div><div class="big-stat">${wpm}</div><div class="big-stat-label">mean wpm</div></div>
+          <div><div class="big-stat">${acc}</div><div class="big-stat-label">mean accuracy</div></div>
+        </div>
+        <div class="summary-tiles">
+          <div class="summary-tile"><strong>${summary.lines_completed}</strong>lines completed</div>
+          <div class="summary-tile"><strong>${summary.passed}</strong>passed</div>
+          <div class="summary-tile"><strong>${summary.failed}</strong>failed</div>
+          <div class="summary-tile"><strong>${minutes}m</strong>time typing</div>
+          <div class="summary-tile"><strong>${summary.best_wpm != null ? summary.best_wpm.toFixed(0) : "–"}</strong>best line wpm</div>
+        </div>
+        <div class="summary-lines">
+          <div>Best: ${best}</div>
+          <div>Worst: ${worst}</div>
+        </div>
+        ${spark ? `<div class="sparkline-wrap">${spark}<div class="sparkline-axis-label">wpm per line, in order typed</div></div>` : ""}
+      `;
+    }
+
+    async function showSessionSummary() {
+      els.sessionSummaryOverlay.hidden = false;
+      els.sessionSummaryBody.innerHTML = "Loading&hellip;";
+      try {
+        const summary = await API.get("/api/session_summary");
+        renderSessionSummary(summary);
+      } catch (err) {
+        els.sessionSummaryBody.innerHTML = `<p class="summary-empty">Could not load the session summary: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    function hideSessionSummary() {
+      els.sessionSummaryOverlay.hidden = true;
+      focusTypingArea();
     }
 
     async function onResetHistory() {

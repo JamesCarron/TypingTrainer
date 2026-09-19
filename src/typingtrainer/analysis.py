@@ -49,6 +49,31 @@ from . import history
 #: suggestion.
 _MAX_LEN_DIFF = 2
 
+#: A words-per-minute figure above this is not a human typing, it is a corrupt
+#: record. Found in the real history on 2026-09-19: one attempt stored 1236 wpm
+#: with an empty ``user_input``, an accuracy of 0.0 and a suspiciously round
+#: 1.0 s duration -- internally inconsistent, and produced by a code path that
+#: no longer exists. Left in the store (nothing here rewrites history) but kept
+#: out of the aggregates, because one such row sets a fake personal best and
+#: flattens every chart drawn to the same scale. The threshold is deliberately
+#: far above any real typist: the world record is around 300 wpm.
+_MAX_PLAUSIBLE_WPM = 300.0
+
+
+def _implausible(record: dict) -> bool:
+    """True when a record's own fields contradict each other badly enough to exclude it.
+
+    Only used for the aggregate and charting functions. The weak-point analyses
+    have their own guard (``_usable_for_alignment``) and do not read Wpm at all.
+    """
+    wpm = record.get("Wpm")
+    if wpm is not None and wpm > _MAX_PLAUSIBLE_WPM:
+        return True
+    duration = record.get("Duration")
+    if duration is not None and duration <= 0:
+        return True
+    return False
+
 _QUOTE_CHARS = set("'\"`‘’“”")
 _SPACE_CHARS = set(" \t")
 
@@ -587,10 +612,13 @@ def learning_curve(attempts: list, window: int = 10) -> dict:
     ``attempts`` is trusted to already be oldest-first, matching
     ``history.iter_attempts``'s contract; this does not re-sort by
     ``EventTime`` (some of which cannot even be parsed -- see module
-    docstring). Attempts missing Wpm or Accuracy are skipped and counted.
+    docstring). Attempts missing Wpm or Accuracy are skipped and counted, as
+    are implausible ones (see ``_implausible``) -- a single corrupt 1236 wpm
+    row otherwise squashes the whole curve against the axis.
     """
     points = []
     skipped = 0
+    implausible = 0
     wpm_window: list = []
     acc_window: list = []
     for key, record in attempts:
@@ -598,6 +626,9 @@ def learning_curve(attempts: list, window: int = 10) -> dict:
         acc = record.get("Accuracy")
         if wpm is None or acc is None:
             skipped += 1
+            continue
+        if _implausible(record):
+            implausible += 1
             continue
         wpm_window.append(wpm)
         acc_window.append(acc)
@@ -614,7 +645,12 @@ def learning_curve(attempts: list, window: int = 10) -> dict:
                 "rolling_mean_accuracy": _round(_mean(acc_window), 4),
             }
         )
-    return {"points": points, "window": window, "skipped_missing_fields": skipped}
+    return {
+        "points": points,
+        "window": window,
+        "skipped_missing_fields": skipped,
+        "skipped_implausible": implausible,
+    }
 
 
 def attempts_per_line(attempts: list) -> dict:
@@ -733,11 +769,18 @@ def overall_stats(attempts: list, today: date | None = None) -> dict:
     used to decide whether the most recent active day still counts as an
     unbroken "current" streak (an idle day breaks it); pass it explicitly in
     tests instead of relying on the wall clock.
+
+    Records whose own fields contradict each other are excluded from the
+    speed and accuracy figures and counted in ``excluded_implausible``; see
+    ``_implausible``. ``total_attempts`` still counts every attempt, because
+    the user did type them.
     """
     today = today or date.today()
-    wpms = [r.get("Wpm") for _k, r in attempts if r.get("Wpm") is not None]
-    accuracies = [r.get("Accuracy") for _k, r in attempts if r.get("Accuracy") is not None]
-    total_duration = sum(r.get("Duration") or 0.0 for _k, r in attempts)
+    usable = [(k, r) for k, r in attempts if not _implausible(r)]
+    excluded = len(attempts) - len(usable)
+    wpms = [r.get("Wpm") for _k, r in usable if r.get("Wpm") is not None]
+    accuracies = [r.get("Accuracy") for _k, r in usable if r.get("Accuracy") is not None]
+    total_duration = sum(r.get("Duration") or 0.0 for _k, r in usable)
 
     days_info = daily_activity(attempts)
     active_days = sorted(date.fromisoformat(d["date"]) for d in days_info["days"])
@@ -772,6 +815,7 @@ def overall_stats(attempts: list, today: date | None = None) -> dict:
         "current_streak_days": current,
         "longest_streak_days": longest,
         "active_days": len(active_days),
+        "excluded_implausible": excluded,
     }
 
 
