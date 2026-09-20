@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TypingTrainer — five UI directions</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---------------------------------------------------------------------------
+   TypingTrainer — five UI directions, 2026-09-20.
+   Self-contained: no CDN, no web fonts, no scripts required to read it.
+   Tokens follow the app's own --tt-* set (this repo is public and personal and
+   uses no corporate stylesheet); the page chrome adds a few of its own.
+   Every mockup uses real content: Art of War line 347 of 444, and the real
+   figures from the store — 209 attempts, 95.32 top wpm, 67.44 mean, quotes the
+   worst error category at 5%.
+--------------------------------------------------------------------------- */
+:root {
+  --tt-bg: #f4f6f7;
+  --tt-surface: #ffffff;
+  --tt-ink: #14171a;
+  --tt-ink-secondary: #5a646e;
+  --tt-sub: #aab3bc;
+  --tt-line: #dde3e8;
+  --tt-accent: #0f7f79;
+  --tt-on-accent: #ffffff;
+  --tt-incorrect: #c0392b;
+  --tt-warn: #b5761f;
+  --page-bg: #eceff1;
+  --page-ink: #14171a;
+  --page-muted: #5a646e;
+  --frame-line: #ccd4da;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {}
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-bg: #14171a;
+    --tt-surface: #1c2126;
+    --tt-ink: #eaedf1;
+    --tt-ink-secondary: #9aa4ae;
+    --tt-sub: #5b656e;
+    --tt-line: #2b3238;
+    --tt-accent: #3fb8ae;
+    --tt-on-accent: #0c1113;
+    --tt-incorrect: #e2675a;
+    --tt-warn: #d99a43;
+    --page-bg: #0d1013;
+    --page-ink: #eaedf1;
+    --page-muted: #9aa4ae;
+    --frame-line: #2b3238;
+  }
+}
+:root[data-theme="dark"] {
+  --tt-bg: #14171a;
+  --tt-surface: #1c2126;
+  --tt-ink: #eaedf1;
+  --tt-ink-secondary: #9aa4ae;
+  --tt-sub: #5b656e;
+  --tt-line: #2b3238;
+  --tt-accent: #3fb8ae;
+  --tt-on-accent: #0c1113;
+  --tt-incorrect: #e2675a;
+  --tt-warn: #d99a43;
+  --page-bg: #0d1013;
+  --page-ink: #eaedf1;
+  --page-muted: #9aa4ae;
+  --frame-line: #2b3238;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--page-ink);
+  font-family: var(--sans);
+  line-height: 1.55;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 48px 24px 96px; }
+h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--page-muted); max-width: 70ch; margin: 0 0 28px; }
+.contents { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 40px; padding: 0; list-style: none; }
+.contents a {
+  display: inline-block; padding: 6px 12px; border: 1px solid var(--frame-line);
+  border-radius: 999px; text-decoration: none; color: var(--page-ink); font-size: 14px;
+}
+.contents a:hover { border-color: var(--tt-accent); color: var(--tt-accent); }
+
+section.mock { margin: 0 0 64px; }
+.mock h2 { font-size: 21px; margin: 0 0 2px; }
+.mock h2 .num { color: var(--tt-accent); font-variant-numeric: tabular-nums; margin-right: 10px; }
+.thesis { color: var(--page-muted); max-width: 78ch; margin: 0 0 18px; }
+.frame {
+  border: 1px solid var(--frame-line); border-radius: 10px; overflow: hidden;
+  background: var(--tt-bg); box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.frame-bar {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  border-bottom: 1px solid var(--tt-line); background: var(--tt-surface);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tt-line); }
+.frame-bar .url {
+  margin-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary);
+}
+.screen { padding: 0; min-height: 360px; }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; margin: 14px 2px 0; }
+.notes div { font-size: 14px; }
+.notes b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--page-muted); margin-bottom: 2px; }
+
+/* shared typing-line rendering ------------------------------------------- */
+.line { font-family: var(--mono); }
+.ok { color: var(--tt-ink); }
+.bad { color: var(--tt-incorrect); text-decoration: underline; text-underline-offset: 3px; }
+.pending { color: var(--tt-sub); }
+.caret {
+  display: inline-block; width: 2px; height: 1.05em; vertical-align: text-bottom;
+  background: var(--tt-accent); margin: 0 -1px; animation: blink 1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 1. Reader ---------------------------------------------------------------- */
+.reader { display: grid; grid-template-columns: 1fr 34px; min-height: 360px; }
+.reader-page { padding: 34px 40px 30px; }
+.reader-chapter {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--tt-sub); margin-bottom: 20px;
+}
+.reader-prose { font-family: Georgia, "Times New Roman", serif; font-size: 16.5px; line-height: 1.85; color: var(--tt-sub); }
+.reader-prose p { margin: 0 0 12px; }
+.reader-live {
+  display: block; margin: 16px 0; padding: 10px 14px; border-left: 3px solid var(--tt-accent);
+  background: var(--tt-surface); font-family: var(--mono); font-size: 15px; line-height: 1.7;
+}
+.reader-rail { border-left: 1px solid var(--tt-line); position: relative; background: var(--tt-surface); }
+.reader-rail::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 78%;
+  background: var(--tt-accent); opacity: 0.16;
+}
+.reader-rail .thumb { position: absolute; left: -1px; right: -1px; top: 78%; height: 3px; background: var(--tt-accent); }
+.reader-rail .pct {
+  position: absolute; top: calc(78% + 10px); left: 50%; transform: translateX(-50%) rotate(90deg);
+  transform-origin: center; font-family: var(--mono); font-size: 10px; color: var(--tt-ink-secondary);
+}
+
+/* 2. Cockpit --------------------------------------------------------------- */
+.cockpit { display: grid; grid-template-columns: 172px 1fr 238px; min-height: 360px; }
+.gauges { border-right: 1px solid var(--tt-line); padding: 18px 16px; background: var(--tt-surface); }
+.gauge-num { font-family: var(--mono); font-size: 34px; line-height: 1; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.gauge-lab { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); margin: 2px 0 16px; }
+.spark { display: block; margin-bottom: 18px; }
+.cockpit-main { padding: 30px 26px; display: flex; flex-direction: column; justify-content: center; }
+.cockpit-main .line { font-size: 19px; line-height: 1.75; }
+.trace { margin-top: 26px; border-top: 1px solid var(--tt-line); padding-top: 12px; }
+.trace-lab { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); margin-bottom: 4px; }
+.keys { border-left: 1px solid var(--tt-line); padding: 18px 14px; background: var(--tt-surface); }
+.kbd { display: flex; flex-direction: column; gap: 4px; }
+.kbd-row { display: flex; gap: 4px; justify-content: center; }
+.kbd-row.r2 { padding-left: 10px; }
+.kbd-row.r3 { padding-left: 22px; }
+.key {
+  width: 19px; height: 19px; border-radius: 3px; border: 1px solid var(--tt-line);
+  font-family: var(--mono); font-size: 9px; display: flex; align-items: center; justify-content: center;
+  color: var(--tt-ink-secondary);
+}
+.key.h1 { background: color-mix(in srgb, var(--tt-incorrect) 18%, transparent); }
+.key.h2 { background: color-mix(in srgb, var(--tt-incorrect) 40%, transparent); color: var(--tt-ink); }
+.key.h3 { background: color-mix(in srgb, var(--tt-incorrect) 68%, transparent); color: var(--tt-on-accent); border-color: transparent; }
+.key.next { outline: 2px solid var(--tt-accent); outline-offset: 1px; }
+.keys h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); margin: 0 0 8px; font-weight: 600; }
+.weaklist { list-style: none; margin: 14px 0 0; padding: 0; font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary); }
+.weaklist li { display: flex; justify-content: space-between; padding: 2px 0; }
+
+/* 3. Coach ----------------------------------------------------------------- */
+.coach { display: grid; grid-template-columns: 250px 1fr; min-height: 360px; }
+.plan { border-right: 1px solid var(--tt-line); padding: 20px 18px; background: var(--tt-surface); }
+.plan h4 { margin: 0 0 14px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); }
+.step { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--tt-line); }
+.step:last-child { border-bottom: 0; }
+.step .bullet {
+  flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--tt-line);
+  font-size: 10px; display: flex; align-items: center; justify-content: center; color: var(--tt-ink-secondary);
+}
+.step.done .bullet { background: var(--tt-accent); border-color: var(--tt-accent); color: var(--tt-on-accent); }
+.step.now .bullet { border-color: var(--tt-accent); color: var(--tt-accent); }
+.step .t { font-size: 13.5px; color: var(--tt-ink); }
+.step .s { font-size: 11.5px; color: var(--tt-ink-secondary); }
+.step.now .t { font-weight: 600; }
+.coach-main { padding: 26px 28px; }
+.why {
+  border-left: 3px solid var(--tt-warn); background: color-mix(in srgb, var(--tt-warn) 9%, transparent);
+  padding: 10px 14px; font-size: 13.5px; color: var(--tt-ink); margin: 0 0 22px; border-radius: 0 4px 4px 0;
+}
+.why b { color: var(--tt-warn); }
+.coach-main .line { font-size: 21px; line-height: 1.7; }
+.coach-cta { margin-top: 26px; display: flex; gap: 10px; align-items: center; }
+.btn {
+  font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--tt-accent);
+  background: var(--tt-accent); color: var(--tt-on-accent); cursor: default;
+}
+.btn.ghost { background: transparent; color: var(--tt-accent); }
+.coach-cta .skip { font-size: 12.5px; color: var(--tt-ink-secondary); }
+
+/* 4. Terminal -------------------------------------------------------------- */
+.term { font-family: var(--mono); background: var(--tt-bg); min-height: 360px; display: flex; flex-direction: column; }
+.term-body { flex: 1; padding: 20px 22px; font-size: 13.5px; }
+.term-row { color: var(--tt-sub); line-height: 1.85; }
+.term-row.cur { color: var(--tt-ink); }
+.term-gutter { color: var(--tt-sub); display: inline-block; width: 4.5em; }
+.term-block { display: inline-block; width: 0.62em; height: 1.05em; background: var(--tt-accent); vertical-align: text-bottom; }
+.term-status {
+  display: flex; gap: 0; font-size: 12px; border-top: 1px solid var(--tt-line);
+}
+.term-status span { padding: 5px 12px; }
+.term-status .mode { background: var(--tt-accent); color: var(--tt-on-accent); font-weight: 600; letter-spacing: 0.04em; }
+.term-status .seg { color: var(--tt-ink-secondary); border-right: 1px solid var(--tt-line); }
+.term-status .grow { flex: 1; }
+.term-cmd { padding: 6px 12px; font-size: 12.5px; color: var(--tt-ink); border-top: 1px solid var(--tt-line); }
+.term-cmd .hint { color: var(--tt-sub); margin-left: 14px; }
+
+/* 5. Zen ------------------------------------------------------------------- */
+.zen { min-height: 360px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; gap: 26px; }
+.zen .ghost { font-family: var(--mono); font-size: 15px; color: var(--tt-sub); opacity: 0.35; }
+.zen .line { font-size: 25px; line-height: 1.6; text-align: center; max-width: 60ch; }
+.zen-dots { display: flex; gap: 5px; margin-top: 10px; }
+.zen-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--tt-line); }
+.zen-dots i.on { background: var(--tt-accent); }
+.zen-dots i.half { background: var(--tt-sub); }
+.footer { color: var(--page-muted); font-size: 13.5px; border-top: 1px solid var(--frame-line); padding-top: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>TypingTrainer — five UI directions</h1>
+<p class="lede">Five different answers to the same question, not five skins of one answer. Each is shown with real content: Art of War line 347 of 444, partly typed with one mistake at “arrangements”, and the real figures from your store — 209 attempts, 95.32 top wpm, 67.44 mean, quotes your worst error category at 5%. The current app is closest to none of these: it is a restrained version of number 5 with the furniture of number 2 parked on a separate page.</p>
+
+<ul class="contents">
+  <li><a href="#reader">1 · Reader</a></li>
+  <li><a href="#cockpit">2 · Cockpit</a></li>
+  <li><a href="#coach">3 · Coach</a></li>
+  <li><a href="#terminal">4 · Terminal</a></li>
+  <li><a href="#zen">5 · Zen</a></li>
+</ul>
+
+<!-- 1 ---------------------------------------------------------------------->
+<section class="mock" id="reader">
+  <h2><span class="num">01</span>Reader</h2>
+  <p class="thesis">The book is the interface. You are not taking 444 tests, you are reading <em>The Art of War</em> with your hands. The page shows the surrounding prose set like a book, dimmed; the line you are on sits in place within it, and the page turns as you go. Progress is spatial rather than numeric — the rail on the right is the edge of the book.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — Art of War</span></div>
+    <div class="screen">
+      <div class="reader">
+        <div class="reader-page">
+          <div class="reader-chapter">Chapter XI · The Nine Situations</div>
+          <div class="reader-prose">
+            <p>35. It is the business of a general to be quiet and thus ensure secrecy; upright and just, and thus maintain order.</p>
+            <p>36. He must be able to mystify his officers and men by false reports and appearances, and thus keep them in total ignorance.</p>
+            <span class="reader-live line"><span class="ok">37. By altering his arr</span><span class="bad">e</span><span class="pending">ngements and changing his plans, he keeps the enemy without definite knowledge.</span><span class="caret"></span></span>
+            <p>By shifting his camp and taking circuitous routes, he prevents the enemy from anticipating his purpose.</p>
+            <p>38. At the critical moment, the leader of an army acts like one who has climbed up a height and then kicks away the ladder behind him.</p>
+          </div>
+        </div>
+        <div class="reader-rail"><div class="thumb"></div><div class="pct">78%</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>You are typing a book, and no competitor treats it as one. Context above and below makes the prose make sense, which is the actual pleasure of this over Monkeytype.</div>
+    <div><b>What it costs</b>A serif page and a monospace live line is a jarring mix, and the surrounding prose competes with the line you are on. Numbers have nowhere to live, so criteria and WPM move out of sight entirely.</div>
+  </div>
+</section>
+
+<!-- 2 ---------------------------------------------------------------------->
+<section class="mock" id="cockpit">
+  <h2><span class="num">02</span>Cockpit</h2>
+  <p class="thesis">The opposite bet: you are practising deliberately, so show the instruments while you fly. Live WPM and accuracy on the left, the next key and your error heat on a keyboard to the right, and a rhythm trace along the bottom that scrolls as you type — the flat stretches are your fluent runs, the spikes are the hesitations the analysis later calls stalls.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — practice</span></div>
+    <div class="screen">
+      <div class="cockpit">
+        <div class="gauges">
+          <div class="gauge-num">71</div><div class="gauge-lab">wpm · best 95</div>
+          <svg class="spark" width="136" height="34" viewBox="0 0 136 34" aria-label="wpm over this session">
+            <polyline fill="none" stroke="var(--tt-accent)" stroke-width="1.6"
+              points="0,26 12,22 24,25 36,18 48,20 60,14 72,17 84,12 96,15 108,9 120,13 132,10"/>
+          </svg>
+          <div class="gauge-num">98<span style="font-size:18px">%</span></div><div class="gauge-lab">accuracy</div>
+          <div class="gauge-num">1:12</div><div class="gauge-lab">this line</div>
+        </div>
+        <div class="cockpit-main">
+          <div class="line"><span class="ok">37. By altering his arr</span><span class="bad">e</span><span class="pending">ngements and changing his plans, he keeps the enemy without definite knowledge.</span><span class="caret"></span></div>
+          <div class="trace">
+            <div class="trace-lab">rhythm · inter-key interval</div>
+            <svg width="100%" height="40" viewBox="0 0 560 40" preserveAspectRatio="none" aria-label="inter-key intervals">
+              <line x1="0" y1="30" x2="560" y2="30" stroke="var(--tt-line)" stroke-width="1"/>
+              <polyline fill="none" stroke="var(--tt-ink-secondary)" stroke-width="1.4"
+                points="0,26 20,24 40,27 60,23 80,25 100,22 120,26 140,24 160,8 180,25 200,23 220,26 240,22 260,24 280,27 300,23 320,25 340,21 360,26 380,24 400,12 420,25 440,23 460,26 480,24 500,22 520,25 540,23 560,26"/>
+              <circle cx="160" cy="8" r="3" fill="var(--tt-warn)"/>
+              <circle cx="400" cy="12" r="3" fill="var(--tt-warn)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="keys">
+          <h4>Error heat · next key</h4>
+          <div class="kbd">
+            <div class="kbd-row"><i class="key">q</i><i class="key">w</i><i class="key h1">e</i><i class="key">r</i><i class="key">t</i><i class="key">y</i><i class="key">u</i><i class="key">i</i><i class="key">o</i><i class="key">p</i></div>
+            <div class="kbd-row r2"><i class="key">a</i><i class="key">s</i><i class="key">d</i><i class="key">f</i><i class="key">g</i><i class="key">h</i><i class="key">j</i><i class="key">k</i><i class="key">l</i><i class="key h3">;</i></div>
+            <div class="kbd-row r3"><i class="key">z</i><i class="key">x</i><i class="key">c</i><i class="key">v</i><i class="key">b</i><i class="key next">n</i><i class="key">m</i><i class="key h2">,</i><i class="key h2">.</i><i class="key h3">'</i></div>
+          </div>
+          <ul class="weaklist">
+            <li><span>' quote</span><span>5.0%</span></li>
+            <li><span>; semicolon</span><span>2.1%</span></li>
+            <li><span>. full stop</span><span>0.9%</span></li>
+            <li><span>e → r</span><span>×3</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>Everything the analysis knows is in front of you while it is still actionable, instead of on a page you visit afterwards. The next-key hint is how keybr teaches.</div>
+    <div><b>What it costs</b>It is the exact opposite of the restraint you just paid for. Moving instruments in peripheral vision are a real distraction while typing, and a rhythm trace tempts you to watch it rather than the line.</div>
+  </div>
+</section>
+
+<!-- 3 ---------------------------------------------------------------------->
+<section class="mock" id="coach">
+  <h2><span class="num">03</span>Coach</h2>
+  <p class="thesis">The session is a workout, and the app decides what it contains. Warm up on the keys you are worst at, then the book, then a review of what changed. One thing on screen at a time, and the reasoning always visible — the drill is not “here is a line”, it is “quotes are your worst category at 5%, so here are thirty seconds of them”. The analysis stops being a page you might visit and becomes the thing driving the session.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — session 14</span></div>
+    <div class="screen">
+      <div class="coach">
+        <div class="plan">
+          <h4>Today · 20 min</h4>
+          <div class="step done"><i class="bullet">✓</i><div><div class="t">Warm-up</div><div class="s">3 drills · quotes, semicolons</div></div></div>
+          <div class="step now"><i class="bullet">2</i><div><div class="t">Targeted drill</div><div class="s">apostrophes in context</div></div></div>
+          <div class="step"><i class="bullet">3</i><div><div class="t">The book</div><div class="s">lines 347–359</div></div></div>
+          <div class="step"><i class="bullet">4</i><div><div class="t">Hard lines</div><div class="s">2 picked for your weak keys</div></div></div>
+          <div class="step"><i class="bullet">5</i><div><div class="t">Review</div><div class="s">what moved today</div></div></div>
+        </div>
+        <div class="coach-main">
+          <p class="why"><b>Why this drill.</b> Quotes are your worst category — 5% error rate against 0.4% for punctuation and effectively zero for letters. You have met them 20 times in 209 attempts, which is too rarely to improve by accident.</p>
+          <div class="line"><span class="ok">the general's plan, the enemy's</span><span class="caret"></span><span class="pending"> haste, a soldier's duty</span></div>
+          <div class="coach-cta">
+            <button class="btn">Start drill</button>
+            <button class="btn ghost">Use a book line instead</button>
+            <span class="skip">or skip to the book →</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>It is the only direction that closes the loop by itself. Everything already built — targets, drills, hard lines, adaptive criteria — has somewhere obvious to appear, and you never have to decide what to practise.</div>
+    <div><b>What it costs</b>It takes the wheel. On a day you only want to read the next page of the book, a five-step plan is an obstacle, so the escape hatch has to be genuinely one key.</div>
+  </div>
+</section>
+
+<!-- 4 ---------------------------------------------------------------------->
+<section class="mock" id="terminal">
+  <h2><span class="num">04</span>Terminal</h2>
+  <p class="thesis">Built for the hands, not the mouse. A modal, keyboard-driven interface in the vim idiom: a status line that always tells you where you are, a command line for everything else, and no control you have to reach for a pointer to hit. <code>:jump 347</code>, <code>:drill quote</code>, <code>:stats</code>, <code>:set wpm 65</code>. The audience is people who care enough about typing to practise it daily; they are the same people who already live like this.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — typingtrainer</span></div>
+    <div class="screen">
+      <div class="term">
+        <div class="term-body">
+          <div class="term-row"><span class="term-gutter">345</span>It is the business of a general to be quiet and thus ensure secrecy; upright</div>
+          <div class="term-row"><span class="term-gutter">346</span>He must be able to mystify his officers and men by false reports and</div>
+          <div class="term-row cur"><span class="term-gutter">347</span><span class="line"><span class="ok">37. By altering his arr</span><span class="bad">e</span><span class="term-block"></span><span class="pending">ngements and changing his plans, he keeps the</span></span></div>
+          <div class="term-row"><span class="term-gutter">348</span>By shifting his camp and taking circuitous routes, he prevents the enemy</div>
+          <div class="term-row"><span class="term-gutter">349</span>38. At the critical moment, the leader of an army acts like one who has</div>
+          <div class="term-row"><span class="term-gutter">350</span>He carries his men deep into hostile territory before he shows his hand.</div>
+        </div>
+        <div class="term-status">
+          <span class="mode">TYPING</span>
+          <span class="seg">artofwar.txt</span>
+          <span class="seg">347/444 · 78%</span>
+          <span class="seg">71 wpm</span>
+          <span class="seg">98%</span>
+          <span class="grow"></span>
+          <span class="seg">stop-on-error</span>
+          <span>streak 3</span>
+        </div>
+        <div class="term-cmd">:drill quote<span class="term-block" style="height:0.95em"></span><span class="hint">tab completes · :help for the full list</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>Fastest possible operation for a daily user, no pointer, and a status line that answers “where am I” without a single chart. Every feature gets a command for free instead of needing a button designed for it.</div>
+    <div><b>What it costs</b>Discoverability: nothing is visible until you know it exists, so <code>:help</code> has to be excellent. Monospace everything makes the prose harder to read than it needs to be, and it is a style, not to everyone's taste.</div>
+  </div>
+</section>
+
+<!-- 5 ---------------------------------------------------------------------->
+<section class="mock" id="zen">
+  <h2><span class="num">05</span>Zen</h2>
+  <p class="thesis">Strip further than Monkeytype does. One line, centred, large. No counters, no criteria, no upcoming text, no buttons — nothing that invites a glance away. Neighbouring lines are barely-there ghosts so you know the shape of what is coming without reading it. Every number waits until you stop; the dots are the only concession, and they are deliberately imprecise.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1</span></div>
+    <div class="screen">
+      <div class="zen">
+        <div class="ghost">He must be able to mystify his officers and men by false reports…</div>
+        <div class="line"><span class="ok">37. By altering his arr</span><span class="bad">e</span><span class="pending">ngements and changing his plans, he keeps the enemy without definite knowledge.</span><span class="caret"></span></div>
+        <div class="ghost">By shifting his camp and taking circuitous routes…</div>
+        <div class="zen-dots">
+          <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>
+          <i class="on"></i><i class="on"></i><i class="half"></i><i></i><i></i>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>Flow. Nothing competes with the sentence, so accuracy tends to rise on its own, and the payoff lands where it belongs — in the session summary, once you have stopped.</div>
+    <div><b>What it costs</b>It hides things you sometimes genuinely need mid-session: which criteria are active, how far the line is from passing, whether stop-on-error is on. And with no live feedback, a run of failures can feel arbitrary.</div>
+  </div>
+</section>
+
+<p class="footer">All five reuse the app's own tokens, so any of them works in light and dark without a second palette. They are static mockups — no interaction, no data fetching. Written 2026-09-20 for <code>docs/UI_Refresh_Notes.md</code>.</p>
+
+</div>
+</body>
+</html>
