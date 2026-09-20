@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TypingTrainer — Wings, refined</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---------------------------------------------------------------------------
+   TypingTrainer — Wings, refined. 2026-09-20.
+
+   Three states per wing, not two:
+     typing    nothing at all but a faint nub at each edge
+     resting   a slim rail, after the grace period: the essence only
+     selected  that rail expands into the full panel
+
+   The layout rule that makes it work: the line's measure is sized so that one
+   expanded panel plus one resting rail still clears it. Expanding therefore
+   overlays empty margin, never text, and the line does not move -- which is
+   the whole reason for choosing Zen as the base. Only one wing is expanded at
+   a time, which is what buys the room for that.
+
+   A working prototype: type into it. Self-contained, no CDN, no libraries.
+--------------------------------------------------------------------------- */
+:root {
+  --tt-bg: #f4f6f7; --tt-surface: #ffffff; --tt-ink: #14171a;
+  --tt-ink-secondary: #5a646e; --tt-sub: #aab3bc; --tt-line: #dde3e8;
+  --tt-accent: #0f7f79; --tt-on-accent: #ffffff; --tt-incorrect: #c0392b;
+  --tt-warn: #b5761f; --tt-good: #2e7d5b;
+  --page-bg: #eceff1; --page-ink: #14171a; --page-muted: #5a646e; --frame-line: #ccd4da;
+  --rail: 46px; --panel: 224px;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+    --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+    --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+    --tt-warn: #d99a43; --tt-good: #4fb78a;
+    --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+  }
+}
+:root[data-theme="dark"] {
+  --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+  --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+  --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+  --tt-warn: #d99a43; --tt-good: #4fb78a;
+  --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page-bg); color: var(--page-ink); font-family: var(--sans); line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 44px 24px 80px; }
+h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--page-muted); max-width: 76ch; margin: 0 0 16px; }
+.howto { border: 1px dashed var(--frame-line); border-radius: 8px; padding: 12px 16px; font-size: 14px; color: var(--page-muted); margin: 0 0 26px; max-width: 76ch; }
+.howto b { color: var(--page-ink); }
+kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--frame-line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; background: var(--tt-surface); }
+h3.sub { font-size: 15px; margin: 30px 0 8px; }
+
+.frame { border: 1px solid var(--frame-line); border-radius: 10px; overflow: hidden; background: var(--tt-bg); }
+.frame-bar { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--tt-line); background: var(--tt-surface); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tt-line); }
+.frame-bar .url { margin-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary); }
+.frame-bar .state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tt-sub); }
+.frame-bar .state.armed { color: var(--tt-warn); }
+.frame-bar .state.rest { color: var(--tt-accent); }
+.frame-bar .state.open { color: var(--tt-accent); font-weight: 700; }
+
+.controls { display: flex; align-items: center; gap: 14px; margin: 12px 2px 0; font-size: 13px; color: var(--page-muted); flex-wrap: wrap; }
+.controls input[type=range] { width: 170px; accent-color: var(--tt-accent); }
+.controls .val { font-family: var(--mono); color: var(--page-ink); min-width: 4.5em; }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; margin: 16px 2px 0; }
+.notes div { font-size: 14px; }
+.notes b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--page-muted); margin-bottom: 2px; }
+
+/* ---- stage ---------------------------------------------------------------- */
+.stage { position: relative; min-height: 420px; overflow: hidden; }
+.zen {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px;
+  /* MODE: reserve (default). One expanded panel's width is held on each side,
+     so nothing in the centre ever moves, whichever wing is open. The cost is a
+     narrower line and visible dead margin at rest. */
+  padding: 36px calc(var(--panel) + 16px);
+  transition: padding 240ms cubic-bezier(.22,.8,.3,1);
+}
+.ghost { font-family: var(--mono); font-size: 13px; color: var(--tt-sub); opacity: 0.4; text-align: center; max-width: 54ch; }
+.line { font-family: var(--mono); font-size: 20px; line-height: 1.7; text-align: center; max-width: 54ch; outline: none; cursor: text; }
+.line .ok { color: var(--tt-ink); }
+.line .bad { color: var(--tt-incorrect); text-decoration: underline; text-underline-offset: 3px; }
+.line .pending { color: var(--tt-sub); }
+.line .caret { display: inline-block; width: 2px; height: 1.05em; vertical-align: text-bottom; background: var(--tt-accent); margin: 0 -1px; animation: blink 1.05s step-end infinite; }
+.line.done .caret { display: none; }
+@keyframes blink { 50% { opacity: 0; } }
+.hint { font-family: var(--mono); font-size: 11px; color: var(--tt-sub); }
+.dots { display: flex; gap: 5px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--tt-line); }
+.dots i.on { background: var(--tt-accent); }
+.dots i.half { background: var(--tt-sub); }
+
+/* ---- the nub: all you see while typing ------------------------------------ */
+.nub { position: absolute; top: 50%; transform: translateY(-50%); width: 3px; height: 46px; border-radius: 3px; background: var(--tt-line); transition: opacity 200ms ease; }
+.nub.l { left: 6px; } .nub.r { right: 6px; }
+.stage.resting .nub, .stage.open-left .nub, .stage.open-right .nub { opacity: 0; }
+
+/* ---- the wing: rail by default, panel when selected ----------------------- */
+.wing {
+  position: absolute; top: 0; bottom: 0; width: var(--rail);
+  background: var(--tt-surface); border-color: var(--tt-line); border-style: solid; border-width: 0;
+  opacity: 0; pointer-events: none; overflow: hidden;
+  transition: width 240ms cubic-bezier(.22,.8,.3,1), opacity 200ms ease, transform 240ms cubic-bezier(.22,.8,.3,1);
+}
+.wing.left { left: 0; border-right-width: 1px; transform: translateX(-10px); }
+.wing.right { right: 0; border-left-width: 1px; transform: translateX(10px); }
+.stage.resting .wing, .stage.open-left .wing, .stage.open-right .wing { opacity: 1; transform: translateX(0); pointer-events: auto; }
+.stage.open-left .wing.left, .stage.open-right .wing.right { width: var(--panel); }
+.wing:hover { background: color-mix(in srgb, var(--tt-accent) 5%, var(--tt-surface)); }
+.stage.open-left .wing.left:hover, .stage.open-right .wing.right:hover { background: var(--tt-surface); }
+
+/* rail face: the essence, glanceable, no prose */
+.rail { position: absolute; inset: 0; width: var(--rail); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; transition: opacity 150ms ease; }
+.stage.open-left .wing.left .rail, .stage.open-right .wing.right .rail { opacity: 0; pointer-events: none; }
+.rail .cap { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tt-sub); writing-mode: vertical-rl; }
+.rail .big { font-family: var(--mono); font-size: 19px; color: var(--tt-ink); font-variant-numeric: tabular-nums; line-height: 1; }
+.rail .small { font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary); line-height: 1; }
+.rail .small.good { color: var(--tt-good); } .rail .small.bad { color: var(--tt-incorrect); }
+.rail .ticks { display: flex; flex-direction: column; gap: 4px; }
+.rail .ticks i { width: 16px; height: 3px; border-radius: 2px; background: var(--tt-line); display: block; }
+.rail .ticks i.done { background: var(--tt-accent); }
+.rail .ticks i.now { background: var(--tt-accent); opacity: 0.45; }
+.rail .heat { display: flex; flex-direction: column; gap: 3px; }
+.rail .heat i { width: 15px; height: 15px; border-radius: 3px; font-family: var(--mono); font-size: 8.5px; font-style: normal; display: flex; align-items: center; justify-content: center; color: var(--tt-ink); }
+.rail .heat i.h3 { background: color-mix(in srgb, var(--tt-incorrect) 65%, transparent); }
+.rail .heat i.h2 { background: color-mix(in srgb, var(--tt-incorrect) 40%, transparent); }
+.rail .heat i.h1 { background: color-mix(in srgb, var(--tt-incorrect) 18%, transparent); }
+.rail .chev { color: var(--tt-sub); font-size: 11px; }
+
+/* panel face: only rendered once the wing is open */
+.panel { position: absolute; inset: 0; width: var(--panel); padding: 18px 16px; opacity: 0; pointer-events: none; transition: opacity 180ms ease 80ms; overflow-y: auto; }
+.stage.open-left .wing.left .panel, .stage.open-right .wing.right .panel { opacity: 1; pointer-events: auto; }
+.panel h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--tt-ink-secondary); font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.panel h4 .close { font-family: var(--mono); font-size: 10px; color: var(--tt-sub); }
+.step { display: flex; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--tt-line); }
+.step:last-of-type { border-bottom: 0; }
+.step .bullet { flex: none; width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--tt-line); font-size: 9.5px; display: flex; align-items: center; justify-content: center; color: var(--tt-ink-secondary); }
+.step.done .bullet { background: var(--tt-accent); border-color: var(--tt-accent); color: var(--tt-on-accent); }
+.step.now .bullet { border-color: var(--tt-accent); color: var(--tt-accent); }
+.step .t { font-size: 13px; color: var(--tt-ink); } .step.now .t { font-weight: 600; }
+.step .s { font-size: 11px; color: var(--tt-ink-secondary); }
+.why { margin-top: 12px; font-size: 11.5px; color: var(--tt-ink-secondary); border-left: 2px solid var(--tt-warn); padding-left: 9px; }
+.btn { font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 6px; border: 1px solid var(--tt-accent); background: var(--tt-accent); color: var(--tt-on-accent); cursor: pointer; margin-top: 12px; }
+.btn.ghost { background: transparent; color: var(--tt-accent); }
+.metric { margin-bottom: 12px; }
+.metric .n { font-family: var(--mono); font-size: 25px; line-height: 1; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.metric .n.good { color: var(--tt-good); } .metric .n.bad { color: var(--tt-incorrect); }
+.metric .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); margin-top: 2px; }
+.keystrip { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 6px; }
+.keystrip i { width: 17px; height: 17px; border-radius: 3px; border: 1px solid var(--tt-line); font-family: var(--mono); font-size: 9px; display: flex; align-items: center; justify-content: center; color: var(--tt-ink-secondary); font-style: normal; }
+.keystrip i.h1 { background: color-mix(in srgb, var(--tt-incorrect) 18%, transparent); }
+.keystrip i.h2 { background: color-mix(in srgb, var(--tt-incorrect) 42%, transparent); color: var(--tt-ink); }
+.keystrip i.h3 { background: color-mix(in srgb, var(--tt-incorrect) 68%, transparent); border-color: transparent; }
+
+/* MODE: drawer. The line gets the full width between the rails, and an
+   expanding panel slides over the top of it -- the text behind dims, because
+   while a panel is open you are reading the panel, not the line. Full measure
+   at rest, covered text while open: the opposite trade to reserve. */
+.stage.mode-drawer .zen { padding-left: calc(var(--rail) + 20px); padding-right: calc(var(--rail) + 20px); }
+.stage.mode-drawer .line, .stage.mode-drawer .ghost { max-width: 70ch; }
+.stage.mode-drawer .wing { box-shadow: 0 0 0 100vmax transparent; }
+.stage.mode-drawer.open-left .zen, .stage.mode-drawer.open-right .zen { opacity: 0.32; }
+.stage .zen { transition: padding 240ms cubic-bezier(.22,.8,.3,1), opacity 200ms ease; }
+
+.modes { display: inline-flex; border: 1px solid var(--frame-line); border-radius: 7px; overflow: hidden; }
+.modes button {
+  font: inherit; font-size: 12.5px; padding: 5px 12px; border: 0; cursor: pointer;
+  background: transparent; color: var(--page-muted);
+}
+.modes button[aria-pressed="true"] { background: var(--tt-accent); color: var(--tt-on-accent); }
+
+/* ---- the state diagram ---------------------------------------------------- */
+.states { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 10px; }
+.states figure { margin: 0; }
+.states .mini { border: 1px solid var(--frame-line); border-radius: 7px; height: 104px; background: var(--tt-bg); display: flex; overflow: hidden; }
+.states .mini .m-rail { background: var(--tt-surface); border-right: 1px solid var(--tt-line); }
+.states .mini .m-rail.r { border-right: 0; border-left: 1px solid var(--tt-line); }
+.states .mini .m-mid { flex: 1; display: flex; align-items: center; justify-content: center; }
+.states .mini .m-mid span { display: block; height: 4px; width: 62%; border-radius: 2px; background: var(--tt-sub); opacity: 0.55; }
+.states figcaption { font-size: 12.5px; color: var(--page-muted); margin-top: 6px; }
+.states figcaption b { color: var(--page-ink); display: block; font-size: 13px; }
+.footer { color: var(--page-muted); font-size: 13.5px; border-top: 1px solid var(--frame-line); padding-top: 18px; margin-top: 34px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Wings, refined — rails at rest, panels when you ask</h1>
+<p class="lede">The chosen direction with the sidebars cut back. While you type there is nothing but a faint nub at each edge. When you stop, and the grace period elapses, each wing appears as a slim rail carrying only what is worth a glance: which step of the session you are on, and how the last line went. Select a rail and it expands into the full panel — the session plan on the left, the instruments on the right.</p>
+
+<div class="howto">
+  <b>Live.</b> Click the line and type — <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> resets. Stop, and the rails arrive. Then <b>click a rail</b>, or press <kbd>←</kbd> / <kbd>→</kbd>, to expand it; <kbd>Esc</kbd> or clicking the centre collapses it. Typing anything at all puts everything away instantly.
+</div>
+
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-delay="900">
+    <div class="nub l"></div><div class="nub r"></div>
+
+    <!-- LEFT · coach -->
+    <aside class="wing left" data-wing="left" role="button" tabindex="0" aria-label="Session plan">
+      <div class="rail">
+        <div class="cap">session</div>
+        <div class="ticks"><i class="done"></i><i class="now"></i><i></i><i></i></div>
+        <div class="big">2<span style="font-size:11px;color:var(--tt-ink-secondary)">/4</span></div>
+        <div class="chev">›</div>
+      </div>
+      <div class="panel">
+        <h4>Session · 20 min <span class="close">esc</span></h4>
+        <div class="step done"><i class="bullet">✓</i><div><div class="t">Warm-up</div><div class="s">quotes, semicolons</div></div></div>
+        <div class="step now"><i class="bullet">2</i><div><div class="t">The book</div><div class="s">lines 347–359 · 1 done</div></div></div>
+        <div class="step"><i class="bullet">3</i><div><div class="t">Hard lines</div><div class="s">2 picked for your weak keys</div></div></div>
+        <div class="step"><i class="bullet">4</i><div><div class="t">Review</div><div class="s">what moved today</div></div></div>
+        <p class="why">Quotes are your worst category at 5%. Two of the lines ahead are dense in them.</p>
+        <button class="btn ghost">Drill quotes instead</button>
+      </div>
+    </aside>
+
+    <!-- RIGHT · cockpit -->
+    <aside class="wing right" data-wing="right" role="button" tabindex="0" aria-label="Last line">
+      <div class="rail">
+        <div class="chev">‹</div>
+        <div class="big" data-rail-wpm>—</div>
+        <div class="small" data-rail-acc>—</div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="cap">last line</div>
+      </div>
+      <div class="panel">
+        <h4>Last line <span class="close">esc</span></h4>
+        <div class="metric"><div class="n" data-wpm>—</div><div class="l">wpm · best 95</div></div>
+        <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+        <div class="metric"><div class="n" data-verdict style="font-size:14px">—</div><div class="l">against 99% · 60 wpm</div></div>
+        <div class="metric"><div class="n" data-stalls style="font-size:19px">—</div><div class="l">stalls over 500 ms</div></div>
+        <h4 style="margin-top:16px">Error heat</h4>
+        <div class="keystrip">
+          <i>q</i><i>w</i><i class="h1">e</i><i>r</i><i>t</i><i>y</i><i>u</i><i>i</i><i>o</i><i>p</i>
+          <i>a</i><i>s</i><i>d</i><i>f</i><i>g</i><i>h</i><i>j</i><i>k</i><i>l</i><i class="h3">;</i>
+          <i>z</i><i>x</i><i>c</i><i>v</i><i>b</i><i>n</i><i>m</i><i class="h2">,</i><i class="h2">.</i><i class="h3">'</i>
+        </div>
+      </div>
+    </aside>
+
+    <div class="zen" data-centre>
+      <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+      <div class="line" tabindex="0" data-line></div>
+      <div class="ghost">By shifting his camp and taking circuitous routes…</div>
+      <div class="hint" data-hint>click and type · enter to finish</div>
+      <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="half"></i><i></i><i></i></div>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <label>grace period <input type="range" min="0" max="3000" step="100" value="900" data-delay-input></label>
+  <span class="val" data-delay-val>900 ms</span>
+  <span class="modes">
+    <button type="button" data-mode="reserve" aria-pressed="true">reserve space</button>
+    <button type="button" data-mode="drawer" aria-pressed="false">overlay as a drawer</button>
+  </span>
+  <span>· hovering a nub or a rail opens that side without waiting</span>
+</div>
+
+<div class="notes">
+  <div><b>The rule that makes it work</b>The centre column permanently reserves one expanded panel's width on each side, so the line sits in precisely the same place in all three states. Expanding overlays empty margin, never text, and nothing reflows under your eyes mid-session.</div>
+  <div><b>Why only one at a time</b>Opening the second wing is what would force the line narrower. Selecting one collapses the other, which also keeps the interaction honest: you are looking at the plan, or at the numbers, not at both.</div>
+  <div><b>Two ways to pay for the panel</b><em>Reserve space</em> holds the panel's width permanently: the line never moves and is never covered, but it is capped near 55 characters and there is dead margin at rest. <em>Overlay as a drawer</em> gives the line its full 70-character measure and slides the panel over the top, dimming the text behind. Switch between them above — this is the one decision left in this design.</div>
+  <div><b>What the rails carry</b>Left: which step, and how far through. Right: the last line's speed and accuracy, and your three worst keys. Everything else waits until you ask for it, which is what keeps the resting state readable at a glance rather than something to study.</div>
+</div>
+
+<h3 class="sub">The three states</h3>
+<div class="states">
+  <figure>
+    <div class="mini"><div class="m-mid"><span></span></div></div>
+    <figcaption><b>Typing</b>Nothing but a nub at each edge. This is plain Zen; the rails are not merely faded, they are out.</figcaption>
+  </figure>
+  <figure>
+    <div class="mini"><div class="m-rail" style="width:16px"></div><div class="m-mid"><span></span></div><div class="m-rail r" style="width:16px"></div></div>
+    <figcaption><b>Resting</b>After the grace period: two slim rails, step number and last-line speed. Glanceable, no prose.</figcaption>
+  </figure>
+  <figure>
+    <div class="mini"><div class="m-rail" style="width:64px"></div><div class="m-mid"><span></span></div><div class="m-rail r" style="width:16px"></div></div>
+    <figcaption><b>Selected</b>One wing expands to the full panel. The centre does not move, because its width was reserved all along.</figcaption>
+  </figure>
+</div>
+
+<p class="footer">Written 2026-09-20 after choosing Wings from <code>UI_Mockups_Hybrid.html</code>. A working prototype: the typing, the diff, the grace timer and the expand behaviour are real; the error heat and the session plan are fixed content standing in for the live analysis.</p>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TARGET = "37. By altering his arrangements and changing his plans, he keeps the enemy without definite knowledge.";
+
+  var stage = document.querySelector(".stage");
+  var lineEl = stage.querySelector("[data-line]");
+  var stateEl = document.querySelector("[data-state]");
+  var hintEl = stage.querySelector("[data-hint]");
+  var delay = parseInt(stage.dataset.delay, 10);
+
+  var typed = "", times = [], start = 0, finished = false, timer = null, open = null;
+
+  function setState(s) {
+    stateEl.textContent = s;
+    stateEl.className = "state" + (s === "armed" ? " armed" : s === "resting" ? " rest" : /open/.test(s) ? " open" : "");
+  }
+
+  // --- the three states -----------------------------------------------------
+  function toTyping() {
+    stage.classList.remove("resting", "open-left", "open-right");
+    open = null;
+    setState(typed.length ? "armed" : "idle");
+  }
+  function toResting() {
+    if (!typed.length) return;
+    stage.classList.add("resting");
+    stage.classList.remove("open-left", "open-right");
+    open = null;
+    fillMetrics();
+    setState("resting");
+  }
+  function toOpen(side) {
+    if (!typed.length) return;          // nothing to show before a line is typed
+    stage.classList.add("resting");
+    stage.classList.toggle("open-left", side === "left");
+    stage.classList.toggle("open-right", side === "right");
+    open = side;
+    fillMetrics();
+    setState("open " + side);
+  }
+
+  // Arm the grace period. Every keystroke resets it, so it only fires once
+  // typing has actually stopped -- carrying straight on is never interrupted.
+  function arm() {
+    window.clearTimeout(timer);
+    if (!typed.length) { setState("idle"); return; }
+    setState("armed");
+    timer = window.setTimeout(toResting, delay);
+  }
+
+  // --- scoring, matching the app -------------------------------------------
+  function score() {
+    var correct = 0, i;
+    for (i = 0; i < typed.length; i++) if (typed[i] === TARGET[i]) correct++;
+    var seconds = times.length > 1 ? (times[times.length - 1] - times[0]) / 1000 : 0;
+    // Below a quarter-second this is not a human typing; the app carries the
+    // same guard after one such record set a fake 1236 wpm personal best.
+    var wpm = seconds >= 0.25 ? (correct * 60) / (5 * seconds) : 0;
+    var stalls = 0;
+    for (i = 1; i < times.length; i++) if (times[i] - times[i - 1] > 500) stalls++;
+    return {
+      wpm: wpm,
+      accuracy: typed.length ? correct / typed.length : 0,
+      stalls: stalls,
+      passed: (typed.length ? correct / typed.length : 0) >= 0.99 && wpm >= 60
+    };
+  }
+
+  function fillMetrics() {
+    var s = score();
+    var set = function (sel, text, cls) {
+      var el = stage.querySelector(sel);
+      if (!el) return;
+      el.textContent = text;
+      if (cls !== undefined) el.className = el.className.replace(/\s*(good|bad)\b/g, "") + (cls ? " " + cls : "");
+    };
+    var accCls = s.accuracy >= 0.99 ? "good" : "bad";
+    set("[data-rail-wpm]", s.wpm ? s.wpm.toFixed(0) : "—");
+    set("[data-rail-acc]", (s.accuracy * 100).toFixed(0) + "%", accCls);
+    set("[data-wpm]", s.wpm ? s.wpm.toFixed(0) : "—");
+    set("[data-acc]", (s.accuracy * 100).toFixed(0) + "%", accCls);
+    set("[data-stalls]", String(s.stalls));
+    set("[data-verdict]", s.passed ? "passed" : (s.accuracy < 0.99 ? "accuracy short" : "too slow"), s.passed ? "good" : "bad");
+  }
+
+  // --- rendering ------------------------------------------------------------
+  function esc(s) { return s.replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; }); }
+  function render() {
+    var html = "", i;
+    for (i = 0; i < typed.length; i++) {
+      html += '<span class="' + (typed[i] === TARGET[i] ? "ok" : "bad") + '">' + esc(typed[i]) + "</span>";
+    }
+    if (!finished) html += '<span class="caret"></span>';
+    html += '<span class="pending">' + esc(TARGET.slice(typed.length)) + "</span>";
+    lineEl.innerHTML = html;
+    lineEl.classList.toggle("done", finished);
+    hintEl.textContent = typed.length
+      ? (finished ? "line finished · stop and wait, or type on" : "enter to finish · esc to reset")
+      : "click and type · enter to finish";
+  }
+
+  function reset() {
+    window.clearTimeout(timer);
+    typed = ""; times = []; finished = false;
+    stage.classList.remove("resting", "open-left", "open-right");
+    open = null;
+    setState("idle");
+    render();
+  }
+
+  // --- input ----------------------------------------------------------------
+  lineEl.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (open) { toResting(); return; }     // first Esc closes a panel
+      reset();                                // second resets the line
+      return;
+    }
+    if (e.key === "ArrowLeft" && !typed.length) return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      // Arrows pick a wing, but only once there is something to look at.
+      if (stage.classList.contains("resting")) {
+        e.preventDefault();
+        var side = e.key === "ArrowLeft" ? "left" : "right";
+        if (open === side) toResting(); else toOpen(side);
+        return;
+      }
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!typed.length) return;
+      finished = true;
+      render();
+      arm();
+      return;
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      typed = typed.slice(0, -1); times.pop();
+      toTyping(); render(); arm();
+      return;
+    }
+    if (e.key.length !== 1) return;
+    e.preventDefault();
+    if (finished) { typed = ""; times = []; finished = false; }   // typing on
+    if (!typed.length) start = Date.now();
+    typed += e.key;
+    times.push(Date.now() - start);
+    toTyping();                                 // any keystroke puts it away
+    render();
+    arm();
+  });
+
+  // Click or hover a wing to open it; clicking the centre closes.
+  stage.querySelectorAll("[data-wing]").forEach(function (wing) {
+    var side = wing.dataset.wing;
+    wing.addEventListener("click", function () { if (open === side) toResting(); else toOpen(side); });
+    wing.addEventListener("mouseenter", function () { if (stage.classList.contains("resting")) toOpen(side); });
+    wing.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toOpen(side); }
+    });
+  });
+  // Hovering a nub skips the wait entirely.
+  stage.querySelectorAll(".nub").forEach(function (nub) {
+    nub.addEventListener("mouseenter", function () { if (typed.length) toResting(); });
+  });
+  stage.querySelector("[data-centre]").addEventListener("click", function () {
+    if (open) toResting();
+    lineEl.focus();
+  });
+
+  document.querySelectorAll("[data-mode]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-mode]").forEach(function (o) {
+        o.setAttribute("aria-pressed", String(o === b));
+      });
+      stage.classList.toggle("mode-drawer", b.dataset.mode === "drawer");
+    });
+  });
+
+  var slider = document.querySelector("[data-delay-input]");
+  var out = document.querySelector("[data-delay-val]");
+  slider.addEventListener("input", function () {
+    delay = parseInt(slider.value, 10);
+    out.textContent = slider.value + " ms";
+    arm();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
