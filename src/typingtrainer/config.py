@@ -26,7 +26,10 @@ from . import paths
 #: permanent left/right rails (``--rail``/``--panel`` in the mockup) -- past that the
 #: measure would run under the wings rather than floating between them.
 MEASURE_CH_MIN = 50
-MEASURE_CH_MAX = 86
+MEASURE_CH_MAX = 120  # raised from 86 on 2026-09-20: the page now clamps
+#: the measure to the space between the rails with a CSS min(), so a higher
+#: ceiling simply means the top of the slider reaches them on a wide screen
+#: instead of stopping short. On a narrow one it reads as "full".
 _MEASURE_CH_DEFAULT = 78
 
 

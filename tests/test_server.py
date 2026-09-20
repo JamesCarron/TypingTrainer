@@ -28,6 +28,7 @@ from datetime import datetime
 import platformdirs
 import pytest
 
+from typingtrainer import config
 from typingtrainer import session as session_mod
 from typingtrainer.web import server as server_mod
 
@@ -311,11 +312,11 @@ def test_measure_ch_round_trips(running_server):
 def test_measure_ch_is_clamped_to_the_valid_range(running_server):
     status, payload = _post(running_server, "/api/settings", {"measure_ch": 999})
     assert status == 200
-    assert payload["measure_ch"] == 86  # MEASURE_CH_MAX
+    assert payload["measure_ch"] == config.MEASURE_CH_MAX
 
     status, payload = _post(running_server, "/api/settings", {"measure_ch": 1})
     assert status == 200
-    assert payload["measure_ch"] == 50  # MEASURE_CH_MIN
+    assert payload["measure_ch"] == config.MEASURE_CH_MIN
 
 
 def test_measure_ch_rejects_non_integer(running_server):

@@ -102,6 +102,10 @@ if (typeof window !== "undefined") {
       "Ubuntu Mono": true,
     };
     const DEFAULT_FONT_FAMILY = "Open Sans";
+    // Mirrors typingtrainer.config; keep in step by hand.
+    const MEASURE_CH_MIN = 50;
+    const MEASURE_CH_MAX = 120;
+    const DEFAULT_MEASURE_CH = 78;
     const ERROR_STYLES = ["tint", "underline", "dot", "strike", "wavy"];
     const DEFAULT_ERROR_STYLE = "tint";
     // Fixed per the agreed design, not a setting: the current line is always
@@ -258,7 +262,13 @@ if (typeof window !== "undefined") {
 
       for (const wing of [els.wingLeft, els.wingRight]) {
         wing.addEventListener("click", (event) => {
-          if (event.target.closest("input, select, button, a, label")) return;
+          // Only the RAIL toggles the drawer. Enumerating interactive elements
+          // to ignore was the wrong way round: it missed <summary>, headings,
+          // the slider track's padding and any plain text, so clicking the
+          // Advanced disclosure -- or anywhere between two controls -- closed
+          // the drawer out from under the person using it. A click anywhere
+          // inside an open panel is a click on its contents, full stop.
+          if (event.target.closest(".panel")) return;
           const side = wing.dataset.wing;
           if (drawerOpen === side) closeDrawer();
           else openDrawer(side);
@@ -357,12 +367,63 @@ if (typeof window !== "undefined") {
       return (snapshot && snapshot.visible_lines && snapshot.visible_lines[0]) || "";
     }
 
+    // The measure has to resolve to ONE width for the whole reading column.
+    // Expressing it as `Nch` in CSS did not: `ch` is relative to the element
+    // it is used on, and the current line is 1.32x the size of the rows around
+    // it, so the same setting gave the current line a cap ~49% wider than its
+    // neighbours (1103px against 742px at 86ch) -- and on a narrower window
+    // that let the current line run out to the rails while the context stayed
+    // short. So measure the character once, in the chosen face at the base
+    // reading size, and hand every block the same pixel width.
+    function measureCharWidth(family, sizePx) {
+      const canvas = measureCharWidth._canvas ||
+        (measureCharWidth._canvas = document.createElement("canvas"));
+      const ctx = canvas.getContext("2d");
+      ctx.font = sizePx + "px '" + family + "'";
+      const w = ctx.measureText("0").width;
+      // A face that has not finished loading measures as the fallback; 0.5em
+      // is a reasonable stand-in until the fonts settle and we are called again.
+      return w > 0 ? w : sizePx * 0.5;
+    }
+
     function applyMeasure(chValue) {
       const n = parseInt(chValue, 10);
-      const clamped = Number.isFinite(n) ? Math.min(86, Math.max(50, n)) : 78;
-      els.stage.style.setProperty("--measure", clamped + "ch");
+      const clamped = Number.isFinite(n)
+        ? Math.min(MEASURE_CH_MAX, Math.max(MEASURE_CH_MIN, n))
+        : DEFAULT_MEASURE_CH;
+      // The top of the slider means FULL, not "120 characters": the request was
+      // that the text can reach the rails, and how many characters that takes
+      // depends on the face, the size and the window. Below the top it is an
+      // honest character count.
+      const isFull = clamped >= MEASURE_CH_MAX;
+      const px = clamped * measureCharWidth(currentFontFamily(), currentFontSizePx());
+      // min(..., 100%) is what stops it ever spanning past the rails, on any
+      // screen size or display scaling: the column can reach them and stop.
+      els.stage.style.setProperty(
+        "--measure",
+        isFull ? "100%" : "min(" + px.toFixed(1) + "px, 100%)"
+      );
       els.measureInput.value = String(clamped);
-      els.measureVal.textContent = String(clamped);
+      // Say "full" when the window has clamped the width away, so the number
+      // never claims a measure the screen is not giving.
+      //
+      // Measured against the CENTRE column, not the rendered line, and read
+      // synchronously. Two traps were hit getting here: the line itself has no
+      // width yet when this runs from render(), and deferring the read to
+      // requestAnimationFrame fixed nothing because rAF callbacks do not run
+      // at all while the tab is in the background -- the label simply stayed
+      // stale. The centre is always laid out, and reading clientWidth flushes
+      // layout synchronously, so this works whether the tab is visible or not.
+      let available = 0;
+      if (els.centre) {
+        const cs = window.getComputedStyle(els.centre);
+        available =
+          els.centre.clientWidth -
+          (parseFloat(cs.paddingLeft) || 0) -
+          (parseFloat(cs.paddingRight) || 0);
+      }
+      els.measureVal.textContent =
+        isFull || (available > 0 && px > available + 1) ? "full" : String(clamped);
     }
 
     function render() {
