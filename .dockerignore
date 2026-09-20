@@ -1,0 +1,7 @@
+.git
+.pixi
+.venv
+__pycache__
+tests
+docs
+pixi.lock

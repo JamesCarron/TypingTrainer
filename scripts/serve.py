@@ -22,12 +22,13 @@ from typingtrainer.web import server as server_mod
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Serve the TypingTrainer web front end.")
     parser.add_argument("--port", type=int, default=0, help="TCP port; 0 (default) picks an ephemeral one.")
+    parser.add_argument("--host", default="127.0.0.1", help="Interface to bind; 0.0.0.0 inside a container.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab.")
     args = parser.parse_args(argv)
 
     open_browser = not args.no_browser and not os.environ.get("TYPINGTRAINER_NO_BROWSER")
 
-    httpd = server_mod.create_server(port=args.port)
+    httpd = server_mod.create_server(host=args.host, port=args.port)
     url = f"http://{httpd.server_address[0]}:{httpd.server_address[1]}/"
     print(url, flush=True)
 
