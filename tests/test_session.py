@@ -195,6 +195,7 @@ def test_snapshot_has_everything_a_view_needs(sample):
         "line_count",
         "progress",
         "visible_lines",
+        "previous_lines",
         "current_line",
         "in_drill",
         "drill_line",
@@ -203,3 +204,28 @@ def test_snapshot_has_everything_a_view_needs(sample):
         "last_result",
     }
     assert snap["last_result"] is None
+
+
+def test_preceding_lines_fills_the_view_above_the_current_line(sample):
+    """The reading surface shows the book above the current line too, and the
+    page may not invent that text -- it has to come from the engine."""
+    s = Session()
+    s.jump_to(3)                      # 1-based, so index 2: "gamma line"
+    assert s.current_line() == "gamma line"
+    assert s.preceding_lines() == ["alpha line", "beta line"]
+    assert s.snapshot()["previous_lines"] == ["alpha line", "beta line"]
+
+
+def test_preceding_lines_is_empty_at_the_start_of_a_text(sample):
+    """Nothing precedes line zero, and that is not an error."""
+    s = Session()
+    assert s.position == 0
+    assert s.preceding_lines() == []
+
+
+def test_preceding_lines_is_capped(sample, isolated, monkeypatch):
+    """The cap exists so a long book does not ship its whole history in every
+    snapshot; the view never asks for more than half of visible_lines."""
+    s = Session()
+    s.jump_to(3)
+    assert s.preceding_lines(n=1) == ["beta line"]

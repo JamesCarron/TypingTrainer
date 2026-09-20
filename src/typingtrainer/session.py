@@ -159,6 +159,20 @@ class Session:
         start = self._text.position
         return list(self._text.contents[start : start + n])
 
+    def preceding_lines(self, n=7) -> list:
+        """The up-to-``n`` lines before the current one, in reading order.
+
+        Added 2026-09-20 for the reading surface, which shows the book above
+        the current line as well as below it. Without this the view could only
+        fill downwards and the page sat lop-sided; the page must not invent the
+        text above, because nothing else would hold it (docs/Contracts.md: no
+        state in the view that the engine does not also have). Fewer than ``n``
+        lines come back near the start of a text, which is correct -- there is
+        genuinely nothing before line zero.
+        """
+        start = max(0, self._text.position - n)
+        return list(self._text.contents[start : self._text.position])
+
     # ---- state machine -----------------------------------------------------
 
     def set_state(self, new_state: str) -> None:
@@ -338,6 +352,7 @@ class Session:
             "line_count": self.line_count,
             "progress": self.progress,
             "visible_lines": self.visible_lines(),
+            "previous_lines": self.preceding_lines(),
             "current_line": self.current_line(),
             "in_drill": self._drill_line is not None,
             "drill_line": self._drill_line,

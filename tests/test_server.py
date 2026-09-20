@@ -117,6 +117,26 @@ def test_root_serves_page_or_skips_when_front_end_not_built(running_server):
     assert "{{JS}}" not in body
 
 
+def test_root_embeds_fonts_once_the_template_has_the_placeholder(running_server):
+    from typingtrainer.web.server import TEMPLATES_DIR, STATIC_DIR
+
+    have_front_end = (
+        (TEMPLATES_DIR / "page.html").is_file()
+        and (STATIC_DIR / "page.css").is_file()
+        and (STATIC_DIR / "page.js").is_file()
+    )
+    if not have_front_end:
+        pytest.skip("front end (templates/page.html, static/page.*) not built yet")
+    if "{{FONTS}}" not in (TEMPLATES_DIR / "page.html").read_text(encoding="utf-8"):
+        pytest.skip("templates/page.html does not have the {{FONTS}} placeholder yet")
+    req = urllib.request.Request(running_server + "/")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+    assert "{{FONTS}}" not in body
+    assert "@font-face" in body
+
+
 def test_root_returns_503_plain_text_when_front_end_missing(running_server, monkeypatch):
     # Force the "not built yet" path regardless of the other stream's progress,
     # so this assertion does not depend on timing between the two streams.
@@ -254,6 +274,11 @@ def test_settings_round_trip(running_server):
         "stop_on_error",
         "live_stats",
         "measure_ch",
+        "font_family",
+        "font_size_px",
+        "visible_lines",
+        "fade_per_line",
+        "error_style",
     }
 
     status, payload = _post(running_server, "/api/settings", {"min_wpm": 42.0})
@@ -304,6 +329,125 @@ def test_measure_ch_rejects_non_integer(running_server):
 
     # bool is an int subclass in Python -- must not be accepted as a width.
     status, payload = _post(running_server, "/api/settings", {"measure_ch": True})
+    assert status == 400
+    assert "error" in payload
+
+
+# ---- reading-surface settings (Reader C, docs/mockups/UI_Mockup_Reader_C.html) -----------
+
+
+def test_font_family_round_trips(running_server):
+    status, payload = _post(running_server, "/api/settings", {"font_family": "Fira Code"})
+    assert status == 200
+    assert payload["font_family"] == "Fira Code"
+
+    status, payload = _get(running_server, "/api/settings")
+    assert status == 200
+    assert payload["font_family"] == "Fira Code"
+
+
+def test_font_family_rejects_unknown_value(running_server):
+    status, payload = _post(running_server, "/api/settings", {"font_family": "Comic Sans"})
+    assert status == 400
+    assert "error" in payload
+
+
+def test_font_size_px_round_trips_and_clamps(running_server):
+    status, payload = _post(running_server, "/api/settings", {"font_size_px": 20})
+    assert status == 200
+    assert payload["font_size_px"] == 20
+
+    status, payload = _post(running_server, "/api/settings", {"font_size_px": 5})
+    assert status == 200
+    assert payload["font_size_px"] == 13  # FONT_SIZE_PX_MIN
+
+    status, payload = _post(running_server, "/api/settings", {"font_size_px": 99})
+    assert status == 200
+    assert payload["font_size_px"] == 26  # FONT_SIZE_PX_MAX
+
+
+def test_font_size_px_rejects_non_integer(running_server):
+    status, payload = _post(running_server, "/api/settings", {"font_size_px": 17.5})
+    assert status == 400
+    assert "error" in payload
+
+    # bool is an int subclass in Python -- must not be accepted as a size.
+    status, payload = _post(running_server, "/api/settings", {"font_size_px": True})
+    assert status == 400
+    assert "error" in payload
+
+
+def test_visible_lines_round_trips_and_clamps(running_server):
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": 7})
+    assert status == 200
+    assert payload["visible_lines"] == 7
+
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": 1})
+    assert status == 200
+    assert payload["visible_lines"] == 3  # VISIBLE_LINES_MIN
+
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": 40})
+    assert status == 200
+    assert payload["visible_lines"] == 15  # VISIBLE_LINES_MAX
+
+
+def test_visible_lines_even_value_rounds_up_to_odd(running_server):
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": 8})
+    assert status == 200
+    assert payload["visible_lines"] == 9
+
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": 4})
+    assert status == 200
+    assert payload["visible_lines"] == 5
+
+
+def test_visible_lines_rejects_non_integer(running_server):
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": "many"})
+    assert status == 400
+    assert "error" in payload
+
+    status, payload = _post(running_server, "/api/settings", {"visible_lines": True})
+    assert status == 400
+    assert "error" in payload
+
+
+def test_fade_per_line_round_trips_and_clamps(running_server):
+    status, payload = _post(running_server, "/api/settings", {"fade_per_line": 0.5})
+    assert status == 200
+    assert payload["fade_per_line"] == 0.5
+
+    status, payload = _post(running_server, "/api/settings", {"fade_per_line": 0.01})
+    assert status == 200
+    assert payload["fade_per_line"] == 0.2  # FADE_PER_LINE_MIN
+
+    status, payload = _post(running_server, "/api/settings", {"fade_per_line": 5})
+    assert status == 200
+    assert payload["fade_per_line"] == 0.95  # FADE_PER_LINE_MAX
+
+
+def test_fade_per_line_rejects_non_number(running_server):
+    status, payload = _post(running_server, "/api/settings", {"fade_per_line": "fast"})
+    assert status == 400
+    assert "error" in payload
+
+    # bool is an int subclass in Python -- must not be accepted as a factor.
+    status, payload = _post(running_server, "/api/settings", {"fade_per_line": True})
+    assert status == 400
+    assert "error" in payload
+
+
+def test_error_style_round_trips(running_server):
+    status, payload = _post(running_server, "/api/settings", {"error_style": "wavy"})
+    assert status == 200
+    assert payload["error_style"] == "wavy"
+
+    status, payload = _get(running_server, "/api/settings")
+    assert status == 200
+    assert payload["error_style"] == "wavy"
+
+
+def test_error_style_rejects_unknown_value(running_server):
+    status, payload = _post(running_server, "/api/settings", {"error_style": "sparkle"})
     assert status == 400
     assert "error" in payload
 

@@ -121,6 +121,20 @@ Verified end to end on 2026-09-19 by typing a line with a deliberate mistake, co
 
 **One corrupt legacy record was distorting every aggregate.** An attempt stored 1236 wpm with an empty `user_input`, an accuracy of 0.0 and a suspiciously round 1.0 s duration — internally inconsistent, from a code path that no longer exists. It was setting the all-time top-speed tile and flattening the learning curve against its axis. `analysis._implausible` now excludes records above 300 wpm or with a non-positive duration from the aggregates and counts them; the row stays in the store, because nothing here rewrites history. Real top speed is 95.32 wpm, mean 67.44.
 
+## The reading surface, 2026-09-20
+
+The typing surface is now a page of the book rather than a single line. The mockups that got there are in `docs/mockups/`: `UI_Mockup_Reader.html` compared three ways of making a typing line look like prose, `UI_Mockup_Reader_C.html` refined the chosen one with live controls, and `Font_Comparison.html` narrowed five sans faces to the shortlist by rendering each at the settings actually chosen.
+
+**What it does.** `visible_lines` rows are centred in the stage with the current line in the middle, set at 1.32× and full ink; every other row is drawn at `fade_per_line ** distance` opacity, so the neighbours stay readable and the outermost lines are barely a suggestion. The lines above come from `previous_lines` on the snapshot, added the same day — the page may not invent the text above the current line, so near the start of a book it simply renders fewer rows.
+
+**Settings**, all in an Advanced section of the left drawer, collapsed by default: `font_family` (Open Sans by default, plus Work Sans, Public Sans, Fira Code, Roboto Mono and Ubuntu Mono), `font_size_px` (17, 13–26), `visible_lines` (5, 3–15, forced odd so the current line has equal context either side), `fade_per_line` (0.6, 0.2–0.95) and `error_style` (the glyph in red by default, plus underline, dot, strike and wavy). The six faces are embedded as base64 in `static/fonts.css`, so the app needs no network and looks identical on any machine.
+
+**The rule that governs the whole design.** A proportional face cannot show the character the typist actually hit in place of the book's, because the line would reflow under the eye mid-word. So substitution happens only in the three fixed-width faces; the three proportional ones show the book's glyph and mark it. That knowledge lives in one place in each layer — `config.FONT_IS_MONO` and `FONT_IS_MONO` in `page.js` — and the two must be kept in step by hand, which is the one piece of duplication this design carries.
+
+**Fonts were chosen against the real thing.** Five sans candidates were rendered at 17px with a 0.6 fade and measured: Open Sans has the highest x-height at 0.54, which is what keeps a line legible once it is faded to 36% two rows out, and it is the default for that reason.
+
+**Two bugs were found by driving it**, neither of which the suite caught. The first paint used the markup's own defaults rather than the saved settings, because the reading surface reads its row count off the controls (so a slider can preview while dragged) and the controls were populated *after* the rows were drawn — nine rows where the setting said five. And the literal `{{FONTS}}` token appearing inside a CSS comment was substituted along with the real one, since the server's replace is global.
+
 ## What was built, 2026-09-20
 
 The design rounds settled on **Wings v2 with deep analysis as a moment**, and it is implemented. The mockups that got there are in `docs/mockups/`: `UI_Mockups.html` (five directions), `UI_Mockups_Hybrid.html` (three ways to combine Zen, Coach and Cockpit), `UI_Mockup_Wings.html` (Wings with rails, and the reserve-versus-drawer question) and `UI_Mockup_Wings_v2.html` (the agreed base plus the three homes for the deep analysis). They are working prototypes rather than pictures, because every decision in this sequence was about timing or interaction and neither can be judged from a still.

@@ -20,6 +20,20 @@
  *     shuddering as the digit count changes
  *   - deep analysis is a *moment*: a full-stage review screen shown on
  *     finishing a session, with a single link out to /stats
+ *
+ * Rewritten again 2026-09-20 for the reading-surface refresh
+ * (docs/mockups/UI_Mockup_Reader_C.html, the agreed design), CSS lifted
+ * from that prototype:
+ *   - the centre shows several book lines (--reading-lines worth, set by
+ *     JS from the `visible_lines` setting) rather than one line plus ghosts;
+ *     rows fade geometrically with distance from the current one via an
+ *     inline opacity JS computes from `fade_per_line`
+ *   - the current line is `--reading-size * 1.32` and full ink; the rest
+ *     are `--reading-size` (the `font_size_px` setting)
+ *   - `--face` is the chosen `font_family` setting; static/fonts.css (see
+ *     the FONTS placeholder in page.html) supplies the six embedded families
+ *   - error marking is one of five styles, switched by an `err-*` class on
+ *     #stage: tint (default, glyph in red), underline, dot, strike, wavy
  */
 
 :root {
@@ -39,6 +53,15 @@
   --panel: 272px;
   --measure: 78ch;
   --mono: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+
+  /* Reading surface: --face and --reading-size are set from JS
+   * (renderSettingsForm -> applyReadingSurface in page.js) to the
+   * font_family/font_size_px settings; --reading-emph is fixed, not a
+   * setting -- the current line is always 1.32x the others per the agreed
+   * design. */
+  --face: "Open Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --reading-size: 17px;
+  --reading-emph: 1.32;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -124,10 +147,9 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 2px;
   padding: 40px calc(var(--rail) + 28px);
   transition: opacity 200ms ease;
-  font-family: var(--mono);
 }
 
 .stage.open-left .centre,
@@ -136,21 +158,35 @@ body {
   pointer-events: none;
 }
 
-.ghost {
-  font-size: 15px;
-  line-height: 1.6;
-  color: var(--tt-sub);
+/* ---- reading surface: rows above/below the current line ------------------
+ * Lifted from docs/mockups/UI_Mockup_Reader_C.html's .row/.rows: plain book
+ * text, no diff colouring (only the current line is ever being typed), each
+ * row's opacity set inline by JS as fade_per_line ** distance. */
+
+.rows-above,
+.rows-below {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: var(--measure);
+}
+
+.row-line {
+  font-family: var(--face);
+  font-size: var(--reading-size);
+  line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
-  opacity: 0.75;
   text-align: center;
-  max-width: var(--measure);
-  min-height: 1.6em;
+  color: var(--tt-ink);
+  transition: opacity 180ms ease;
 }
 
 .current-line-wrap {
   position: relative;
   max-width: var(--measure);
+  margin: 6px 0;
 }
 
 #typing-area {
@@ -158,7 +194,8 @@ body {
 }
 
 #current-line {
-  font-size: 28px;
+  font-family: var(--face);
+  font-size: calc(var(--reading-size) * var(--reading-emph));
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -170,8 +207,44 @@ body {
   color: var(--tt-ink);
 }
 
-.char-incorrect {
+/* Error marking: five styles from the prototype, switched by an err-* class
+ * on #stage. tint is the default and deliberately the most minimal. */
+.err-tint .char-incorrect {
   color: var(--tt-incorrect);
+}
+
+.err-underline .char-incorrect {
+  color: var(--tt-ink);
+  border-bottom: 1px solid var(--tt-incorrect);
+}
+
+.err-dot .char-incorrect {
+  color: var(--tt-ink);
+  position: relative;
+}
+
+.err-dot .char-incorrect::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -0.22em;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--tt-incorrect);
+  transform: translateX(-50%);
+}
+
+.err-strike .char-incorrect {
+  color: var(--tt-ink);
+  text-decoration: line-through;
+  text-decoration-color: var(--tt-incorrect);
+}
+
+.err-wavy .char-incorrect {
+  color: var(--tt-ink);
+  text-decoration: underline wavy var(--tt-incorrect);
+  text-underline-offset: 3px;
 }
 
 .char-incorrect-space {
@@ -224,13 +297,6 @@ body {
 @keyframes tt-caret-blink {
   0%, 50% { opacity: 1; }
   50.01%, 100% { opacity: 0; }
-}
-
-.upcoming-line {
-  font-size: 15px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 #capslock-warning {
@@ -471,6 +537,33 @@ body {
 
 .panel h5:first-of-type {
   margin-top: 4px;
+}
+
+/* Advanced settings: collapsed by default (docs/mockups/UI_Mockup_Reader_C.html
+ * doesn't have a drawer of its own, so this chrome is this page's own, kept
+ * to the same visual language as the rest of the Display section). */
+#advanced-settings {
+  margin-bottom: 10px;
+}
+
+#advanced-settings summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--tt-ink-secondary);
+  margin-bottom: 10px;
+  list-style: none;
+}
+
+#advanced-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+#advanced-settings summary::before {
+  content: "\25B8 ";
+}
+
+#advanced-settings[open] summary::before {
+  content: "\25BE ";
 }
 
 .panel-line {

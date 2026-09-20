@@ -16,6 +16,17 @@
   setting, and deep analysis moved out of this page entirely into a
   full-stage review screen shown when a session finishes (the only door out
   to /stats). See AGENTS.md and docs/Contracts.md.
+
+  Rewritten again 2026-09-20 for the reading-surface refresh
+  (docs/mockups/UI_Mockup_Reader_C.html, the agreed design): the centre is
+  now several book lines at once -- the current one set larger and in full
+  ink, the others fading geometrically with distance -- driven by the
+  `font_family`, `font_size_px`, `visible_lines`, `fade_per_line` and
+  `error_style` settings, all exposed in the left drawer's new "Advanced"
+  section. The FONTS placeholder (static/fonts.css) is filled ahead of CSS so
+  the page's own rules can reference the embedded families. The permanent
+  rails, the drawers, the right rail's live figures and the end-of-session
+  review are unchanged.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -24,6 +35,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TypingTrainer</title>
   <style>
+{{FONTS}}
 {{CSS}}
   </style>
 </head>
@@ -81,6 +93,58 @@
           <span>live stats</span>
           <span class="field-control"><input type="checkbox" data-setting="live_stats" /></span>
         </label>
+
+        <h5>Advanced</h5>
+        <details id="advanced-settings">
+          <summary>Font, size, lines, fade &amp; error marking</summary>
+          <div class="field">
+            <span>font</span>
+            <span class="field-control">
+              <select id="font-family-input" data-setting="font_family">
+                <option value="Open Sans">Open Sans</option>
+                <option value="Work Sans">Work Sans</option>
+                <option value="Public Sans">Public Sans</option>
+                <option value="Fira Code">Fira Code</option>
+                <option value="Roboto Mono">Roboto Mono</option>
+                <option value="Ubuntu Mono">Ubuntu Mono</option>
+              </select>
+            </span>
+          </div>
+          <div class="field">
+            <span>font size</span>
+            <span class="field-control">
+              <input type="range" id="font-size-input" min="13" max="26" step="1" data-setting="font_size_px" />
+              <span class="num" id="font-size-val">17</span>
+            </span>
+          </div>
+          <div class="field">
+            <span>visible lines</span>
+            <span class="field-control">
+              <input type="range" id="visible-lines-input" min="3" max="15" step="2" data-setting="visible_lines" />
+              <span class="num" id="visible-lines-val">5</span>
+            </span>
+          </div>
+          <div class="field">
+            <span>fade per line</span>
+            <span class="field-control">
+              <input type="range" id="fade-per-line-input" min="0.2" max="0.95" step="0.01" data-setting="fade_per_line" />
+              <span class="num" id="fade-per-line-val">0.60</span>
+            </span>
+          </div>
+          <div class="field">
+            <span>error mark</span>
+            <span class="field-control">
+              <select id="error-style-input" data-setting="error_style">
+                <option value="tint">glyph in red</option>
+                <option value="underline">hairline under</option>
+                <option value="dot">dot beneath</option>
+                <option value="strike">struck through</option>
+                <option value="wavy">wavy underline</option>
+              </select>
+            </span>
+          </div>
+        </details>
+
         <label class="field">
           <span>require accuracy</span>
           <span class="field-control"><input type="checkbox" data-setting="require_accuracy" /></span>
@@ -105,9 +169,17 @@
       </div>
     </aside>
 
-    <!-- Centre: the typing surface itself. -->
+    <!--
+      Centre: the reading surface (docs/mockups/UI_Mockup_Reader_C.html).
+      Several book lines at once, the current one set larger and in full
+      ink in the middle, the rest fading geometrically with distance. Rows
+      above and below are built by JS from GET /api/state's `previous_lines`
+      and `visible_lines` -- the current line keeps its own fixed
+      typing-area/caret machinery (id="current-line" etc.) unchanged from
+      the previous surface, since renderLines()/positionCaret() depend on it.
+    -->
     <div class="centre" id="centre">
-      <div id="previous-line" class="ghost"></div>
+      <div id="rows-above" class="rows-above"></div>
 
       <div class="current-line-wrap">
         <div id="typing-area" tabindex="0" aria-label="Typing area">
@@ -116,7 +188,7 @@
         <div id="caret" class="caret" aria-hidden="true"></div>
       </div>
 
-      <div id="upcoming-lines" class="ghost"></div>
+      <div id="rows-below" class="rows-below"></div>
 
       <div id="capslock-warning" hidden>&#9888; CAPS LOCK ON</div>
       <div id="instructions">Press Enter to start.</div>

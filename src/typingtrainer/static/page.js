@@ -22,6 +22,23 @@
  *     review (GET /api/review, every field optional) whose only door out is
  *     "See everything" to /stats
  *
+ * Rewritten again 2026-09-20 for the reading-surface refresh
+ * (docs/mockups/UI_Mockup_Reader_C.html, the agreed design), rendering logic
+ * lifted from that prototype's Proto.render/currentMarkup:
+ *   - the centre shows several book lines: rows above from GET /api/state's
+ *     `previous_lines` (up to 7, in reading order, shorter near the start of
+ *     the text -- never padded), the current line unchanged in its own
+ *     typing-area/caret machinery, rows below from `visible_lines[1:]`
+ *   - each off-current row's opacity is `fade_per_line ** distance`, set
+ *     inline per row; the current line is always `font_size_px * 1.32`
+ *   - `--face`/`--reading-size` (page.css) are set from the `font_family`/
+ *     `font_size_px` settings; FONT_IS_MONO below mirrors
+ *     typingtrainer.config.FONT_IS_MONO and is the one place that knows
+ *     which faces are fixed-width -- see the substitution rule in
+ *     renderLines()
+ *   - error marking is one of five styles (ERROR_STYLES), applied as an
+ *     `err-*` class on #stage
+ *
  * `diff()` below must have exactly the semantics of
  * `typingtrainer.scoring.compare_lines`: itertools.zip_longest(guess, answer,
  * fillvalue=False), so the result is as long as the LONGER string. It is
@@ -66,6 +83,34 @@ if (typeof module !== "undefined" && module.exports) {
 if (typeof window !== "undefined") {
   (function () {
     "use strict";
+
+    // Mirrors typingtrainer.config.FONT_FAMILIES / FONT_IS_MONO exactly --
+    // this is the one place in the front end that knows which faces are
+    // fixed-width. It has to live here (not just in config.py) because the
+    // substitution rule below (renderLines) is a rendering decision: a
+    // proportional face must never show the character the typist actually
+    // hit in place of the book's, because the line would reflow under their
+    // eye mid-word, while a monospace face can safely show it since every
+    // glyph occupies the same box. Keep this in sync with config.py by hand
+    // if that list ever changes.
+    const FONT_IS_MONO = {
+      "Open Sans": false,
+      "Work Sans": false,
+      "Public Sans": false,
+      "Fira Code": true,
+      "Roboto Mono": true,
+      "Ubuntu Mono": true,
+    };
+    const DEFAULT_FONT_FAMILY = "Open Sans";
+    const ERROR_STYLES = ["tint", "underline", "dot", "strike", "wavy"];
+    const DEFAULT_ERROR_STYLE = "tint";
+    // Fixed per the agreed design, not a setting: the current line is always
+    // this multiple of font_size_px.
+    const CURRENT_LINE_EMPHASIS = 1.32;
+
+    function isMonoFamily(family) {
+      return !!FONT_IS_MONO[family];
+    }
 
     const API = {
       async get(path) {
@@ -116,9 +161,6 @@ if (typeof window !== "undefined") {
     let railTimer = null; // throttles the right rail's live recompute (~6/s)
     let flashTimer = null; // clears a transient char-flash / shake
 
-    let lastPosition = null; // for showing the previous line, best-effort
-    let lastTargetLine = null;
-    let previousLineText = null;
     let flashIndex = null; // index in the current line to show a char-flash
 
     // The right rail freezes on the finished line's server-returned values
@@ -149,8 +191,8 @@ if (typeof window !== "undefined") {
       els.centre = $("centre");
       els.typingArea = $("typing-area");
       els.currentLine = $("current-line");
-      els.previousLine = $("previous-line");
-      els.upcomingLines = $("upcoming-lines");
+      els.rowsAbove = $("rows-above");
+      els.rowsBelow = $("rows-below");
       els.caret = $("caret");
       els.capslock = $("capslock-warning");
       els.instructions = $("instructions");
@@ -170,6 +212,14 @@ if (typeof window !== "undefined") {
       els.nextBtn = $("next-btn");
       els.measureInput = $("measure-input");
       els.measureVal = $("measure-val");
+      els.fontFamilyInput = $("font-family-input");
+      els.fontSizeInput = $("font-size-input");
+      els.fontSizeVal = $("font-size-val");
+      els.visibleLinesInput = $("visible-lines-input");
+      els.visibleLinesVal = $("visible-lines-val");
+      els.fadePerLineInput = $("fade-per-line-input");
+      els.fadePerLineVal = $("fade-per-line-val");
+      els.errorStyleInput = $("error-style-input");
       els.resetHistoryBtn = $("reset-history-btn");
       els.finishSessionBtn = $("finish-session-btn");
 
@@ -228,6 +278,22 @@ if (typeof window !== "undefined") {
       // until "change" fires and persists it like any other setting.
       els.measureInput.addEventListener("input", () => {
         applyMeasure(els.measureInput.value);
+      });
+      // Same live-preview treatment for the Advanced sliders: font size and
+      // fade repaint the surface immediately; visible-lines re-slices the
+      // rows already in hand (it never asks the server for more than the up
+      // to 7 previous_lines / visible_lines it already sent).
+      els.fontSizeInput.addEventListener("input", () => {
+        applyReadingSurfaceCss();
+        els.fontSizeVal.textContent = els.fontSizeInput.value;
+      });
+      els.fadePerLineInput.addEventListener("input", () => {
+        els.fadePerLineVal.textContent = parseFloat(els.fadePerLineInput.value).toFixed(2);
+        renderLines();
+      });
+      els.visibleLinesInput.addEventListener("input", () => {
+        els.visibleLinesVal.textContent = els.visibleLinesInput.value;
+        renderLines();
       });
 
       window.addEventListener("resize", positionCaret);
@@ -302,29 +368,16 @@ if (typeof window !== "undefined") {
     function render() {
       if (!snapshot) return;
 
-      // Best-effort "previous line": only known when this snapshot is one
-      // line further on than the last one we rendered (the normal forward
-      // flow of typing through the book). A jump, a text switch or a manual
-      // reposition simply has no previous line to show -- Session does not
-      // expose one, and this view may not invent state the engine does not
-      // also hold (docs/Contracts.md: "no state in the page the server does
-      // not also hold" -- this is display-only best effort, never submitted).
-      const target = currentTarget();
-      if (lastPosition !== null) {
-        if (snapshot.position === lastPosition + 1) {
-          previousLineText = lastTargetLine;
-        } else if (snapshot.position !== lastPosition) {
-          previousLineText = null;
-        }
-      }
-      lastPosition = snapshot.position;
-      lastTargetLine = target;
-
+      // The settings form goes FIRST: the reading surface reads its row count,
+      // fade and face off those controls so a slider can preview live while it
+      // is dragged, which means the controls must already hold the server's
+      // values before the first paint. Rendering them afterwards left the very
+      // first paint using the markup's own defaults -- nine rows where the
+      // setting said five -- and nothing re-rendered to correct it.
+      renderSettingsForm();
       renderLeftRail();
-      renderPreviousLine();
       renderLines();
       renderInstructions();
-      renderSettingsForm();
       updateLiveRail();
     }
 
@@ -358,13 +411,63 @@ if (typeof window !== "undefined") {
       }
     }
 
-    function renderPreviousLine() {
-      els.previousLine.textContent = previousLineText || "";
+    // ---- reading-surface control values -------------------------------
+    //
+    // The Advanced settings inputs are the single source of truth for how
+    // the surface is drawn -- same pattern as the existing measure_ch
+    // slider (applyMeasure): renderSettingsForm() keeps the inputs synced
+    // to snapshot.settings, and rendering always reads the *inputs*, so a
+    // drag in progress (before "change" fires and persists it) previews
+    // immediately without waiting on a round trip.
+
+    function currentFontFamily() {
+      const v = els.fontFamilyInput && els.fontFamilyInput.value;
+      return v && v in FONT_IS_MONO ? v : DEFAULT_FONT_FAMILY;
+    }
+
+    function currentFontSizePx() {
+      const n = els.fontSizeInput ? parseInt(els.fontSizeInput.value, 10) : NaN;
+      return Number.isFinite(n) ? n : 17;
+    }
+
+    function currentVisibleLines() {
+      const n = els.visibleLinesInput ? parseInt(els.visibleLinesInput.value, 10) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 5;
+    }
+
+    function currentFadePerLine() {
+      const n = els.fadePerLineInput ? parseFloat(els.fadePerLineInput.value) : NaN;
+      return Number.isFinite(n) ? n : 0.6;
+    }
+
+    function currentErrorStyle() {
+      const v = els.errorStyleInput && els.errorStyleInput.value;
+      return ERROR_STYLES.includes(v) ? v : DEFAULT_ERROR_STYLE;
+    }
+
+    // Sets --face/--reading-size on the stage and the err-* class, without
+    // touching the row contents -- called on every settings sync and on
+    // every live slider drag.
+    function applyReadingSurfaceCss() {
+      const family = currentFontFamily();
+      const fallback = isMonoFamily(family) ? "monospace" : "sans-serif";
+      els.stage.style.setProperty("--face", `"${family}", ${fallback}`);
+      els.stage.style.setProperty("--reading-size", currentFontSizePx() + "px");
+      const style = currentErrorStyle();
+      for (const s of ERROR_STYLES) {
+        els.stage.classList.remove("err-" + s);
+      }
+      els.stage.classList.add("err-" + style);
+    }
+
+    function fadeOpacity(distance) {
+      return Math.pow(currentFadePerLine(), distance).toFixed(3);
     }
 
     function renderLines() {
       const visible = (snapshot && snapshot.visible_lines) || [];
       const target = visible[0] || "";
+      const mono = isMonoFamily(currentFontFamily());
 
       els.currentLine.innerHTML = "";
       const matches = diff(typed, target);
@@ -372,15 +475,23 @@ if (typeof window !== "undefined") {
       for (let i = 0; i < length; i++) {
         const span = document.createElement("span");
         const hasTyped = i < typed.length;
-        const typedChar = hasTyped ? typed[i] : target[i];
-        span.textContent = typedChar;
+        const targetChar = i < target.length ? target[i] : null;
         if (hasTyped) {
-          span.className = matches[i] ? "char-correct" : "char-incorrect";
-          const targetChar = i < target.length ? target[i] : null;
-          if (!matches[i] && (typed[i] === " " || targetChar === " ")) {
+          const isMatch = matches[i];
+          // Substitution rule: a fixed-width face can show the character the
+          // typist actually hit in its place, since every glyph occupies the
+          // same box and nothing reflows. A proportional face must never do
+          // this -- the line would visibly reflow under the eye mid-word --
+          // so it always shows the book's own glyph and marks it instead.
+          // See FONT_IS_MONO at the top of this file.
+          const glyph = isMatch || mono ? typed[i] : targetChar !== null ? targetChar : typed[i];
+          span.textContent = glyph;
+          span.className = isMatch ? "char-correct" : "char-incorrect";
+          if (!isMatch && (typed[i] === " " || targetChar === " ")) {
             span.classList.add("char-incorrect-space");
           }
         } else {
+          span.textContent = target[i];
           span.className = "char-pending";
         }
         if (flashIndex !== null && i === flashIndex) {
@@ -389,15 +500,49 @@ if (typeof window !== "undefined") {
         els.currentLine.appendChild(span);
       }
 
-      els.upcomingLines.innerHTML = "";
-      for (const line of visible.slice(1)) {
-        const div = document.createElement("div");
-        div.className = "upcoming-line";
-        div.textContent = line;
-        els.upcomingLines.appendChild(div);
-      }
-
+      renderRowsAbove();
+      renderRowsBelow(visible);
       positionCaret();
+    }
+
+    // Rows above the current line, from GET /api/state's `previous_lines`
+    // (up to 7, oldest first, closest-to-current last). Genuinely shorter
+    // near the start of a text -- rendered as fewer rows, never padded or
+    // invented, per docs/Contracts.md ("no state in the page the server
+    // does not also hold").
+    function renderRowsAbove() {
+      if (!els.rowsAbove) return;
+      els.rowsAbove.innerHTML = "";
+      const previous = (snapshot && Array.isArray(snapshot.previous_lines)) ? snapshot.previous_lines : [];
+      const half = Math.floor(currentVisibleLines() / 2);
+      const want = Math.min(half, previous.length);
+      if (want <= 0) return;
+      const shown = previous.slice(previous.length - want); // closest-to-current last
+      shown.forEach((line, i) => {
+        const distance = shown.length - i; // nearest row above is distance 1
+        const div = document.createElement("div");
+        div.className = "row-line";
+        div.style.opacity = fadeOpacity(distance);
+        div.textContent = line;
+        els.rowsAbove.appendChild(div);
+      });
+    }
+
+    // Rows below the current line, from `visible_lines[1:]` -- the current
+    // line itself is visible_lines[0] and is rendered separately above.
+    function renderRowsBelow(visible) {
+      if (!els.rowsBelow) return;
+      els.rowsBelow.innerHTML = "";
+      const half = Math.floor(currentVisibleLines() / 2);
+      const below = visible.slice(1, 1 + half);
+      below.forEach((line, i) => {
+        const distance = i + 1;
+        const div = document.createElement("div");
+        div.className = "row-line";
+        div.style.opacity = fadeOpacity(distance);
+        div.textContent = line;
+        els.rowsBelow.appendChild(div);
+      });
     }
 
     function positionCaret() {
@@ -452,9 +597,10 @@ if (typeof window !== "undefined") {
 
     function renderSettingsForm() {
       const s = snapshot.settings;
+      const READING_KEYS = ["font_family", "font_size_px", "visible_lines", "fade_per_line", "error_style"];
       for (const input of document.querySelectorAll("[data-setting]")) {
         const key = input.dataset.setting;
-        if (key === "measure_ch") continue; // handled separately below
+        if (key === "measure_ch" || READING_KEYS.includes(key)) continue; // handled separately below
         if (!(key in s)) continue;
         if (input.type === "checkbox") {
           input.checked = !!s[key];
@@ -470,6 +616,32 @@ if (typeof window !== "undefined") {
       // to the prototype's 78 so the page still works while it lands.
       const measure = s.measure_ch != null ? s.measure_ch : 78;
       applyMeasure(measure);
+
+      // Reading-surface Advanced settings: each falls back to its
+      // config.py default if a settings payload is missing it (older
+      // server, or a value that failed validation upstream).
+      if (els.fontFamilyInput) {
+        els.fontFamilyInput.value = s.font_family != null && s.font_family in FONT_IS_MONO ? s.font_family : DEFAULT_FONT_FAMILY;
+      }
+      if (els.fontSizeInput) {
+        const size = s.font_size_px != null ? s.font_size_px : 17;
+        els.fontSizeInput.value = String(size);
+        els.fontSizeVal.textContent = String(size);
+      }
+      if (els.visibleLinesInput) {
+        const lines = s.visible_lines != null ? s.visible_lines : 5;
+        els.visibleLinesInput.value = String(lines);
+        els.visibleLinesVal.textContent = String(lines);
+      }
+      if (els.fadePerLineInput) {
+        const fade = s.fade_per_line != null ? s.fade_per_line : 0.6;
+        els.fadePerLineInput.value = String(fade);
+        els.fadePerLineVal.textContent = fade.toFixed(2);
+      }
+      if (els.errorStyleInput) {
+        els.errorStyleInput.value = ERROR_STYLES.includes(s.error_style) ? s.error_style : DEFAULT_ERROR_STYLE;
+      }
+      applyReadingSurfaceCss();
     }
 
     // ---- live rail: WPM / ACC recompute while typing, throttled ------------
@@ -932,8 +1104,12 @@ if (typeof window !== "undefined") {
         value = input.checked;
       } else if (key === "min_accuracy") {
         value = parseFloat(input.value) / 100.0;
-      } else if (key === "measure_ch") {
+      } else if (key === "measure_ch" || key === "font_size_px" || key === "visible_lines") {
         value = parseInt(input.value, 10);
+      } else if (key === "fade_per_line") {
+        value = parseFloat(input.value);
+      } else if (key === "font_family" || key === "error_style") {
+        value = input.value; // strings, straight through
       } else {
         value = parseFloat(input.value);
       }
@@ -942,6 +1118,7 @@ if (typeof window !== "undefined") {
         snapshot.settings = settings;
         clearError();
         renderSettingsForm();
+        renderLines();
         updateLiveRail();
       } catch (err) {
         showError(err.message);
@@ -956,8 +1133,6 @@ if (typeof window !== "undefined") {
         snapshot = await API.post("/api/text", { name: name });
         clearError();
         resetLineBuffers();
-        lastPosition = null;
-        previousLineText = null;
         render();
         focusTypingArea();
       } catch (err) {

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TypingTrainer — the reading surface, three ways</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---------------------------------------------------------------------------
+   TypingTrainer — the reading surface, 2026-09-20.
+
+   Two changes on top of Wings v2:
+     1. the measure can now run all the way out to the collapsed rails; an
+        expanding wing simply overlaps the text
+     2. the centre should read like a page of a book rather than a test
+
+   The hard part is (2). A book page wants proportional type, and proportional
+   type REFLOWS as characters are substituted -- which is the one thing a
+   typing surface may never do, because the line would shift under the eye
+   mid-word. The three variants below are three different answers to exactly
+   that, and it is the only real difference between them.
+
+   Working prototypes. Self-contained: no CDN, no libraries, no web fonts.
+--------------------------------------------------------------------------- */
+:root {
+  --tt-bg: #f4f6f7; --tt-surface: #ffffff; --tt-ink: #14171a;
+  --tt-ink-secondary: #5a646e; --tt-sub: #aab3bc; --tt-line: #dde3e8;
+  --tt-accent: #0f7f79; --tt-on-accent: #ffffff; --tt-incorrect: #c0392b;
+  --tt-warn: #b5761f; --tt-good: #2e7d5b;
+  --paper: #fbfaf7; --paper-ink: #1c1a17;
+  --page-bg: #eceff1; --page-ink: #14171a; --page-muted: #5a646e; --frame-line: #ccd4da;
+  --rail: 70px; --panel: 244px; --measure: 100%;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+  --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+    --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+    --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+    --tt-warn: #d99a43; --tt-good: #4fb78a;
+    --paper: #16191c; --paper-ink: #e7e4de;
+    --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+  }
+}
+:root[data-theme="dark"] {
+  --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+  --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+  --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+  --tt-warn: #d99a43; --tt-good: #4fb78a;
+  --paper: #16191c; --paper-ink: #e7e4de;
+  --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page-bg); color: var(--page-ink); font-family: var(--sans); line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 44px 24px 80px; }
+h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--page-muted); max-width: 78ch; margin: 0 0 14px; }
+.howto { border: 1px dashed var(--frame-line); border-radius: 8px; padding: 12px 16px; font-size: 14px; color: var(--page-muted); margin: 0 0 30px; max-width: 78ch; }
+.howto b { color: var(--page-ink); }
+kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--frame-line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; background: var(--tt-surface); }
+h2 { font-size: 20px; margin: 42px 0 2px; }
+h2 .num { color: var(--tt-accent); margin-right: 10px; }
+.thesis { color: var(--page-muted); max-width: 80ch; margin: 0 0 14px; }
+.frame { border: 1px solid var(--frame-line); border-radius: 10px; overflow: hidden; background: var(--tt-bg); }
+.frame-bar { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--tt-line); background: var(--tt-surface); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tt-line); }
+.frame-bar .url { margin-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary); }
+.frame-bar .state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tt-sub); }
+.controls { display: flex; align-items: center; gap: 14px; margin: 12px 2px 0; font-size: 13px; color: var(--page-muted); flex-wrap: wrap; }
+.controls input[type=range] { width: 190px; accent-color: var(--tt-accent); }
+.controls .val { font-family: var(--mono); color: var(--page-ink); min-width: 5.5em; }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; margin: 14px 2px 0; }
+.notes div { font-size: 14px; }
+.notes b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--page-muted); margin-bottom: 2px; }
+
+/* ---- stage and rails (unchanged from Wings v2) ---------------------------- */
+.stage { position: relative; min-height: 470px; overflow: hidden; background: var(--paper); }
+.centre {
+  position: absolute; inset: 0; overflow: hidden;
+  /* The measure now runs right out to the collapsed rails. An expanding wing
+     overlaps the text rather than pushing it; that is the whole point of the
+     drawer, and it is why the text may use the full width. */
+  padding: 30px calc(var(--rail) + 14px);
+  transition: opacity 200ms ease;
+}
+.stage.open .centre { opacity: 0.28; }
+.col { max-width: var(--measure); margin: 0 auto; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+.chapter { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--tt-sub); margin-bottom: 16px; }
+
+.wing { position: absolute; top: 0; bottom: 0; width: var(--rail); background: var(--tt-surface); border-color: var(--tt-line); border-style: solid; border-width: 0; overflow: hidden; cursor: pointer; transition: width 240ms cubic-bezier(.22,.8,.3,1), box-shadow 240ms ease; z-index: 2; }
+.wing.left { left: 0; border-right-width: 1px; }
+.wing.right { right: 0; border-left-width: 1px; }
+.stage.open-left .wing.left, .stage.open-right .wing.right { width: var(--panel); box-shadow: 0 0 26px rgba(0,0,0,0.12); }
+.rail { position: absolute; inset: 0; width: var(--rail); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; padding: 12px 4px; transition: opacity 150ms ease; }
+.stage.open-left .wing.left .rail, .stage.open-right .wing.right .rail { opacity: 0; }
+.rf { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.rf .k { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--tt-sub); }
+.rf .v { font-family: var(--mono); font-size: 17px; line-height: 1.05; color: var(--tt-ink); font-variant-numeric: tabular-nums; min-width: 3.6ch; text-align: center; }
+.rf .v.sm { font-size: 13px; min-width: 4.2ch; }
+.rf .v.good { color: var(--tt-good); } .rf .v.bad { color: var(--tt-incorrect); }
+.divider { width: 22px; height: 1px; background: var(--tt-line); }
+.ticks { display: flex; gap: 3px; }
+.ticks i { width: 8px; height: 3px; border-radius: 2px; background: var(--tt-line); }
+.ticks i.done { background: var(--tt-accent); }
+.heat { display: flex; gap: 2px; }
+.heat i { width: 14px; height: 14px; border-radius: 3px; font-family: var(--mono); font-size: 8px; font-style: normal; display: flex; align-items: center; justify-content: center; color: var(--tt-ink); }
+.heat i.h3 { background: color-mix(in srgb, var(--tt-incorrect) 65%, transparent); }
+.heat i.h2 { background: color-mix(in srgb, var(--tt-incorrect) 40%, transparent); }
+.heat i.h1 { background: color-mix(in srgb, var(--tt-incorrect) 18%, transparent); }
+.more { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tt-accent); text-align: center; line-height: 1.3; }
+.panel { position: absolute; inset: 0; width: var(--panel); padding: 18px 16px; opacity: 0; pointer-events: none; transition: opacity 170ms ease 70ms; }
+.stage.open-left .wing.left .panel, .stage.open-right .wing.right .panel { opacity: 1; pointer-events: auto; }
+.panel h4 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--tt-ink-secondary); font-weight: 600; }
+.panel p { font-size: 12.5px; color: var(--tt-ink-secondary); }
+
+/* ---- shared prose ---------------------------------------------------------- */
+.prose { font-family: var(--serif); font-size: 17px; line-height: 1.95; color: var(--tt-sub); }
+.prose p { margin: 0 0 10px; }
+.hint { font-family: var(--mono); font-size: 11px; color: var(--tt-sub); margin-top: 16px; }
+.caret { display: inline-block; width: 2px; height: 1.05em; vertical-align: text-bottom; background: var(--tt-accent); margin: 0 -1px; animation: blink 1.05s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---- A · facsimile: proportional, target always shown ---------------------- */
+.facs .live { font-family: var(--serif); font-size: 17px; line-height: 1.95; color: var(--tt-sub); outline: none; cursor: text; }
+.facs .live .done { color: var(--paper-ink); }
+.facs .live .wrong {
+  color: var(--tt-incorrect);
+  /* The target glyph stays; only its treatment changes, so nothing reflows. */
+  text-decoration: underline wavy var(--tt-incorrect); text-underline-offset: 3px;
+}
+.facs .live .pending { color: var(--tt-sub); }
+.facs .typedout {
+  font-family: var(--mono); font-size: 11px; color: var(--tt-incorrect);
+  margin-top: 8px; min-height: 1.3em;
+}
+
+/* ---- B · lifted line: mono band inside the serif page ---------------------- */
+.lift .band {
+  font-family: var(--mono); font-size: 16.5px; line-height: 1.8;
+  background: var(--tt-surface); border-left: 3px solid var(--tt-accent);
+  padding: 12px 16px; margin: 14px 0; border-radius: 0 5px 5px 0; outline: none; cursor: text;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.lift .band .done { color: var(--tt-ink); }
+.lift .band .wrong { color: var(--tt-incorrect); text-decoration: underline; text-underline-offset: 3px; }
+.lift .band .pending { color: var(--tt-sub); }
+
+/* ---- C · typewriter scroll -------------------------------------------------- */
+.tw .flow {
+  font-family: var(--serif); font-size: 17.5px; line-height: 2.05; color: var(--tt-sub);
+  outline: none; cursor: text; max-height: 300px; overflow: hidden; position: relative;
+}
+.tw .flow .done { color: var(--paper-ink); }
+.tw .flow .wrong { color: var(--tt-incorrect); text-decoration: underline wavy var(--tt-incorrect); text-underline-offset: 3px; }
+.tw .flow .pending { color: var(--tt-sub); }
+.tw .flow .past { color: var(--tt-sub); opacity: 0.55; }
+.tw .scroller { position: relative; transition: transform 260ms cubic-bezier(.22,.8,.3,1); }
+.tw .fade-top, .tw .fade-bot { position: absolute; left: 0; right: 0; height: 52px; pointer-events: none; z-index: 1; }
+.tw .fade-top { top: 0; background: linear-gradient(var(--paper), transparent); }
+.tw .fade-bot { bottom: 0; background: linear-gradient(transparent, var(--paper)); }
+.footer { color: var(--page-muted); font-size: 13.5px; border-top: 1px solid var(--frame-line); padding-top: 18px; margin-top: 38px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>The reading surface — three ways to make a typing line look like a book</h1>
+<p class="lede">Both requested changes are in all three: the measure runs right out to the collapsed rails, and an expanding wing simply overlaps the text. What differs is how each one solves the problem underneath the Reader look — <b>a book page wants proportional type, and proportional type reflows when characters are substituted.</b> A line that shifts under your eye mid-word is worse than any amount of ugliness, so each variant buys stability a different way.</p>
+
+<div class="howto">
+  <b>Live.</b> Click the text and type the highlighted line — <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> resets. Click either rail to open its drawer and watch it overlap the text. The width slider under each frame runs from 50 characters to <b>full</b>, which is flush with the rails.
+</div>
+
+<!-- A ---------------------------------------------------------------------->
+<h2><span class="num">A</span>Facsimile — the book's own type, target always shown</h2>
+<p class="thesis">The page is set in a serif at book leading, and the live line is set in <em>the same serif</em>, inline, so there is no visible seam between the text you are reading and the text you are typing. Stability comes from never substituting a glyph: the line always shows the book's characters, and typing only changes how they are <em>treated</em> — struck through in red where you went wrong, full ink where you were right, grey ahead of the caret. Nothing can reflow because nothing is replaced. What you actually typed appears in small monospace below, so a wrong character is still legible.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-variant="facs">
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="done"></i><i></i><i></i></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">line</span><span class="v sm">347</span></div>
+        <div class="rf"><span class="k">of</span><span class="v sm">444</span></div>
+        <div class="divider"></div><div class="more">plan &amp;<br>settings ›</div>
+      </div>
+      <div class="panel"><h4>Session · 20 min</h4><p>The drawer overlaps the page. The text does not move — it is simply covered while you are reading this instead.</p></div>
+    </aside>
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf"><span class="k">wpm</span><span class="v" data-wpm>—</span></div>
+        <div class="rf"><span class="k">acc</span><span class="v sm" data-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="divider"></div><div class="more">last line ›</div>
+      </div>
+      <div class="panel"><h4>Last line</h4><p>Live figures on the rail, detail in here.</p></div>
+    </aside>
+    <div class="centre facs" data-centre>
+      <div class="col">
+        <div class="chapter">Chapter XI · The Nine Situations</div>
+        <div class="prose">
+          <p>35. It is the business of a general to be quiet and thus ensure secrecy; upright and just, and thus maintain order.</p>
+          <p>36. He must be able to mystify his officers and men by false reports and appearances, and thus keep them in total ignorance.</p>
+        </div>
+        <div class="live" tabindex="0" data-line></div>
+        <div class="typedout" data-typedout></div>
+        <div class="prose" style="margin-top:10px">
+          <p>By shifting his camp and taking circuitous routes, he prevents the enemy from anticipating his purpose.</p>
+          <p>38. At the critical moment, the leader of an army acts like one who has climbed up a height and then kicks away the ladder behind him.</p>
+        </div>
+        <div class="hint" data-hint>click the line and type · enter to finish</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="controls">
+  <label>line width <input type="range" min="50" max="100" step="1" value="100" data-measure></label>
+  <span class="val" data-measure-val>full</span>
+  <span>· 100 = flush with the rails</span>
+</div>
+<div class="notes">
+  <div><b>Why it might win</b>It is the only one that genuinely looks like a book while you type: one typeface, one leading, the live line indistinguishable from the prose around it until you touch it. Proportional serif at this size is also simply easier to read for long stretches than monospace.</div>
+  <div><b>What it costs</b>You never see your own wrong character in place — the book's letter stays and turns red, and what you typed is relegated to a small line beneath. For a trainer that is a real loss: seeing <em>what</em> you hit instead is half the feedback.</div>
+</div>
+
+<!-- B ---------------------------------------------------------------------->
+<h2><span class="num">B</span>Lifted line — a monospace band set into the page</h2>
+<p class="thesis">The page around you is a book: serif, book leading, real context above and below. The line you are typing is lifted out of that flow into a monospace band with an accent edge — visibly a different kind of object, because it is one. Monospace means characters can be substituted freely with no reflow at all, so you see exactly what you typed, wrong letters and all. This is the original Reader mockup, tightened.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-variant="lift">
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="done"></i><i></i><i></i></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">line</span><span class="v sm">347</span></div>
+        <div class="rf"><span class="k">of</span><span class="v sm">444</span></div>
+        <div class="divider"></div><div class="more">plan &amp;<br>settings ›</div>
+      </div>
+      <div class="panel"><h4>Session · 20 min</h4><p>Overlapping the page, as agreed.</p></div>
+    </aside>
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf"><span class="k">wpm</span><span class="v" data-wpm>—</span></div>
+        <div class="rf"><span class="k">acc</span><span class="v sm" data-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="divider"></div><div class="more">last line ›</div>
+      </div>
+      <div class="panel"><h4>Last line</h4><p>Live figures on the rail, detail in here.</p></div>
+    </aside>
+    <div class="centre lift" data-centre>
+      <div class="col">
+        <div class="chapter">Chapter XI · The Nine Situations</div>
+        <div class="prose">
+          <p>35. It is the business of a general to be quiet and thus ensure secrecy; upright and just, and thus maintain order.</p>
+          <p>36. He must be able to mystify his officers and men by false reports and appearances, and thus keep them in total ignorance.</p>
+        </div>
+        <div class="band" tabindex="0" data-line></div>
+        <div class="prose">
+          <p>By shifting his camp and taking circuitous routes, he prevents the enemy from anticipating his purpose.</p>
+          <p>38. At the critical moment, the leader of an army acts like one who has climbed up a height and then kicks away the ladder behind him.</p>
+        </div>
+        <div class="hint" data-hint>click the band and type · enter to finish</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="controls">
+  <label>line width <input type="range" min="50" max="100" step="1" value="100" data-measure></label>
+  <span class="val" data-measure-val>full</span>
+  <span>· 100 = flush with the rails</span>
+</div>
+<div class="notes">
+  <div><b>Why it might win</b>You keep everything the trainer needs — real substitution, your own wrong characters visible, no reflow ever — and still get the book around it. It is also the least risky: the band behaves exactly like today's line.</div>
+  <div><b>What it costs</b>Two typefaces and two rhythms on one page. The band is honest about being a widget, which slightly breaks the illusion the Reader look is reaching for.</div>
+</div>
+
+<!-- C ---------------------------------------------------------------------->
+<h2><span class="num">C</span>Typewriter — one continuous text that scrolls under a fixed cursor</h2>
+<p class="thesis">No lines at all, visually. The book runs as continuous prose and you type through it; text behind the cursor is in full ink, text ahead is grey, and the page scrolls so the cursor stays at the same height on screen — the typewriter scroll that writing apps use. The line boundaries still exist underneath, because the criteria are per line, but you never see one. Stability comes the same way as A: the book's glyphs are never replaced.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-variant="tw">
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="done"></i><i></i><i></i></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">line</span><span class="v sm">347</span></div>
+        <div class="rf"><span class="k">of</span><span class="v sm">444</span></div>
+        <div class="divider"></div><div class="more">plan &amp;<br>settings ›</div>
+      </div>
+      <div class="panel"><h4>Session · 20 min</h4><p>Overlapping the page, as agreed.</p></div>
+    </aside>
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf"><span class="k">wpm</span><span class="v" data-wpm>—</span></div>
+        <div class="rf"><span class="k">acc</span><span class="v sm" data-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="divider"></div><div class="more">last line ›</div>
+      </div>
+      <div class="panel"><h4>Last line</h4><p>Live figures on the rail, detail in here.</p></div>
+    </aside>
+    <div class="centre tw" data-centre>
+      <div class="col">
+        <div class="chapter">Chapter XI · The Nine Situations</div>
+        <div class="flow" tabindex="0" data-line>
+          <div class="fade-top"></div><div class="fade-bot"></div>
+          <div class="scroller" data-scroller></div>
+        </div>
+        <div class="hint" data-hint>click the text and type · enter to finish the sentence</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="controls">
+  <label>line width <input type="range" min="50" max="100" step="1" value="100" data-measure></label>
+  <span class="val" data-measure-val>full</span>
+  <span>· 100 = flush with the rails</span>
+</div>
+<div class="notes">
+  <div><b>Why it might win</b>It is the most complete answer to "I am reading a book with my hands" — no widget, no band, no line count, just the text moving past. The sense of progress through a chapter is much stronger than a position label.</div>
+  <div><b>What it costs</b>The biggest departure from what exists, and it hides the unit the criteria actually judge: you pass or fail per line, but you cannot see where a line ends. Wrong characters are again not shown in place, as in A.</div>
+</div>
+
+<p class="footer">Written 2026-09-20. Working prototypes: the typing, the diff, the rails and the drawers are real. Content is Art of War lines 345–348. See <code>docs/UI_Refresh_Notes.md</code>.</p>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TARGET = "37. By altering his arrangements and changing his plans, he keeps the enemy without definite knowledge.";
+  var TAIL = " By shifting his camp and taking circuitous routes, he prevents the enemy from anticipating his purpose. 38. At the critical moment, the leader of an army acts like one who has climbed up a height and then kicks away the ladder behind him.";
+  var LEAD = "36. He must be able to mystify his officers and men by false reports and appearances, and thus keep them in total ignorance. ";
+
+  function esc(t) { return t.replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; }); }
+
+  function Proto(stage) {
+    var self = this;
+    this.stage = stage;
+    this.variant = stage.dataset.variant;
+    this.line = stage.querySelector("[data-line]");
+    this.hint = stage.querySelector("[data-hint]");
+    this.typedout = stage.querySelector("[data-typedout]");
+    this.scroller = stage.querySelector("[data-scroller]");
+    this.stateEl = stage.closest(".frame").querySelector("[data-state]");
+    this.typed = ""; this.times = []; this.start = 0; this.finished = false;
+    this.open = null; this.tick = null;
+
+    this.render();
+    this.line.addEventListener("keydown", function (e) { self.key(e); });
+    stage.querySelectorAll("[data-wing]").forEach(function (w) {
+      w.addEventListener("click", function () {
+        var side = w.dataset.wing;
+        if (self.open === side) self.close(); else self.openWing(side);
+      });
+    });
+    stage.querySelector("[data-centre]").addEventListener("click", function () {
+      if (self.open) self.close();
+      self.line.focus();
+    });
+
+    var section = stage.closest(".frame").parentNode;
+    section.querySelectorAll("[data-measure]").forEach(function (input) {
+      input.addEventListener("input", function () {
+        var v = parseInt(input.value, 10);
+        stage.style.setProperty("--measure", v >= 100 ? "100%" : v + "ch");
+        section.querySelectorAll("[data-measure-val]").forEach(function (o) {
+          o.textContent = v >= 100 ? "full" : v + " ch";
+        });
+        if (self.variant === "tw") self.scrollToCursor();
+      });
+    });
+  }
+
+  Proto.prototype.setState = function (s) {
+    this.stateEl.textContent = s;
+  };
+  Proto.prototype.openWing = function (side) {
+    this.stage.classList.add("open");
+    this.stage.classList.toggle("open-left", side === "left");
+    this.stage.classList.toggle("open-right", side === "right");
+    this.open = side; this.setState("open " + side);
+  };
+  Proto.prototype.close = function () {
+    this.stage.classList.remove("open", "open-left", "open-right");
+    this.open = null; this.setState(this.typed.length ? "typing" : "idle");
+  };
+
+  Proto.prototype.score = function () {
+    var correct = 0, i;
+    for (i = 0; i < this.typed.length; i++) if (this.typed[i] === TARGET[i]) correct++;
+    var seconds = this.times.length > 1 ? (this.times[this.times.length - 1] - this.times[0]) / 1000 : 0;
+    var wpm = seconds >= 0.25 ? (correct * 60) / (5 * seconds) : 0;
+    return { wpm: wpm, acc: this.typed.length ? correct / this.typed.length : 0 };
+  };
+  Proto.prototype.fill = function () {
+    var s = this.score();
+    var w = this.stage.querySelector("[data-wpm]");
+    var a = this.stage.querySelector("[data-acc]");
+    w.textContent = s.wpm ? s.wpm.toFixed(0) : "—";
+    a.textContent = this.typed.length ? (s.acc * 100).toFixed(0) + "%" : "—";
+    a.className = "v sm " + (s.acc >= 0.99 ? "good" : "bad");
+  };
+
+  // Facsimile and typewriter never substitute a glyph: the book's character
+  // stays put and only its treatment changes, so proportional type cannot
+  // reflow. The lifted band is monospace, so it can show what was actually
+  // typed without moving anything.
+  Proto.prototype.markup = function () {
+    var html = "", i, cls;
+    for (i = 0; i < TARGET.length; i++) {
+      if (i < this.typed.length) {
+        cls = this.typed[i] === TARGET[i] ? "done" : "wrong";
+        var glyph = this.variant === "lift" ? this.typed[i] : TARGET[i];
+        html += '<span class="' + cls + '">' + esc(glyph) + "</span>";
+      } else {
+        if (i === this.typed.length && !this.finished) html += '<span class="caret"></span>';
+        html += '<span class="pending">' + esc(TARGET[i]) + "</span>";
+      }
+    }
+    if (this.typed.length >= TARGET.length && !this.finished) html += '<span class="caret"></span>';
+    return html;
+  };
+
+  Proto.prototype.render = function () {
+    if (this.variant === "tw") {
+      this.scroller.innerHTML =
+        '<span class="past">' + esc(LEAD) + "</span>" + this.markup() +
+        '<span class="pending">' + esc(TAIL) + "</span>";
+      this.scrollToCursor();
+    } else {
+      this.line.innerHTML = this.markup();
+    }
+    if (this.typedout) {
+      this.typedout.textContent = this.typed.length
+        ? "you typed: " + this.typed.slice(-46)
+        : "";
+    }
+    if (this.hint) {
+      this.hint.textContent = this.typed.length
+        ? (this.finished ? "finished · esc to reset" : "enter to finish · esc to reset")
+        : (this.variant === "lift" ? "click the band and type · enter to finish" : "click the text and type · enter to finish");
+    }
+  };
+
+  // Keep the caret at a constant height: shift the whole text up instead of
+  // letting the cursor travel down the page.
+  Proto.prototype.scrollToCursor = function () {
+    if (this.variant !== "tw") return;
+    var caret = this.scroller.querySelector(".caret");
+    if (!caret) { this.scroller.style.transform = "none"; return; }
+    // offsetTop is measured against .scroller, which is position: relative, so
+    // it is unaffected by the transform already applied -- measuring against
+    // the viewport instead made this compound on itself and threw the text off
+    // the top of the frame.
+    var half = this.line.clientHeight / 2;
+    var shift = Math.max(0, caret.offsetTop + caret.offsetHeight / 2 - half);
+    this.scroller.style.transform = "translateY(" + (-shift).toFixed(1) + "px)";
+  };
+
+  Proto.prototype.key = function (e) {
+    var self = this;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (this.open) { this.close(); return; }
+      this.typed = ""; this.times = []; this.finished = false;
+      window.clearInterval(this.tick); this.tick = null;
+      this.render(); this.fill(); this.setState("idle");
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!this.typed.length) return;      // an empty buffer is not an attempt
+      this.finished = true;
+      window.clearInterval(this.tick); this.tick = null;
+      this.render(); this.fill(); this.setState("finished");
+      return;
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      this.typed = this.typed.slice(0, -1); this.times.pop();
+      this.render(); return;
+    }
+    if (e.key.length !== 1) return;
+    e.preventDefault();
+    if (this.finished) { this.typed = ""; this.times = []; this.finished = false; }
+    if (!this.typed.length) {
+      this.start = Date.now();
+      // Live figures, throttled rather than recomputed per keystroke.
+      var self2 = this;
+      this.tick = window.setInterval(function () { self2.fill(); }, 150);
+    }
+    this.typed += e.key;
+    this.times.push(Date.now() - this.start);
+    this.setState("typing");
+    this.render();
+  };
+
+  document.querySelectorAll("[data-stage]").forEach(function (s) { new Proto(s); });
+})();
+</script>
+</body>
+</html>

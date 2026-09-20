@@ -362,14 +362,52 @@ def _api_settings_get(body, session: Session):
 def _api_settings_post(body, session: Session):
     from dataclasses import asdict
 
+    body = dict(body)
     if "measure_ch" in body:
         value = body["measure_ch"]
         # bool is an int subclass in Python; reject it explicitly rather than
         # silently storing True/False as 1/0 characters wide.
         if isinstance(value, bool) or not isinstance(value, int):
             raise ApiError(400, "measure_ch must be an integer")
-        body = dict(body)
         body["measure_ch"] = min(max(value, config.MEASURE_CH_MIN), config.MEASURE_CH_MAX)
+    if "font_family" in body:
+        value = body["font_family"]
+        if not isinstance(value, str) or value not in config.FONT_FAMILIES:
+            raise ApiError(
+                400,
+                "font_family must be one of: " + ", ".join(config.FONT_FAMILIES),
+            )
+    if "font_size_px" in body:
+        value = body["font_size_px"]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ApiError(400, "font_size_px must be an integer")
+        body["font_size_px"] = min(
+            max(value, config.FONT_SIZE_PX_MIN), config.FONT_SIZE_PX_MAX
+        )
+    if "visible_lines" in body:
+        value = body["visible_lines"]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ApiError(400, "visible_lines must be an integer")
+        value = min(max(value, config.VISIBLE_LINES_MIN), config.VISIBLE_LINES_MAX)
+        if value % 2 == 0:
+            value += 1
+            if value > config.VISIBLE_LINES_MAX:
+                value -= 2
+        body["visible_lines"] = value
+    if "fade_per_line" in body:
+        value = body["fade_per_line"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ApiError(400, "fade_per_line must be a number")
+        body["fade_per_line"] = min(
+            max(float(value), config.FADE_PER_LINE_MIN), config.FADE_PER_LINE_MAX
+        )
+    if "error_style" in body:
+        value = body["error_style"]
+        if not isinstance(value, str) or value not in config.ERROR_STYLES:
+            raise ApiError(
+                400,
+                "error_style must be one of: " + ", ".join(config.ERROR_STYLES),
+            )
     try:
         new_settings = session.update_settings(**body)
     except ValueError as exc:
@@ -461,17 +499,33 @@ def _dispatch(server: "TypingTrainerServer", method: str, path: str, body: dict)
             return 400, {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def _assemble_from_files(page: Path, css: Path, js: Path) -> str | None:
-    """One page as a string, filling ``{{CSS}}``/``{{JS}}`` from the given files.
+def _assemble_from_files(
+    page: Path, css: Path, js: Path, fonts: Path | None = None
+) -> str | None:
+    """One page as a string, filling ``{{CSS}}``/``{{JS}}`` (and, if given and
+    present in the template, ``{{FONTS}}``) from the given files.
 
     Shared by ``_assemble_page`` (``GET /``) and ``_assemble_stats_page``
     (``GET /stats``) -- same read-fresh-every-request approach, so either
     front-end stream can edit its files and just refresh the browser. Returns
-    None, degrading to a 503, if any of the three files is not there yet.
+    None, degrading to a 503, if the page, css or js file is not there yet.
+
+    ``fonts`` is optional and substituted only if the placeholder is actually
+    present: the other stream is writing the template that will contain
+    ``{{FONTS}}``, so this must tolerate a page.html that does not have it
+    yet, and ``/stats`` never passes ``fonts`` at all since it does not need
+    the embedded faces.
     """
     if not (page.is_file() and css.is_file() and js.is_file()):
         return None
     html = page.read_text(encoding="utf-8")
+    if fonts is not None and "{{FONTS}}" in html:
+        if not fonts.is_file():
+            return None
+        html = html.replace("{{FONTS}}", fonts.read_text(encoding="utf-8"))
+    # {{FONTS}} is filled first so the page's own {{CSS}} rules -- substituted
+    # next -- win over the embedded @font-face declarations, per the agreed
+    # ordering (fonts, then page CSS, then JS).
     html = html.replace("{{CSS}}", css.read_text(encoding="utf-8"))
     html = html.replace("{{JS}}", js.read_text(encoding="utf-8"))
     return html
@@ -480,7 +534,10 @@ def _assemble_from_files(page: Path, css: Path, js: Path) -> str | None:
 def _assemble_page() -> str | None:
     """The typing page as one string, or None if its front-end files are missing."""
     return _assemble_from_files(
-        TEMPLATES_DIR / "page.html", STATIC_DIR / "page.css", STATIC_DIR / "page.js"
+        TEMPLATES_DIR / "page.html",
+        STATIC_DIR / "page.css",
+        STATIC_DIR / "page.js",
+        STATIC_DIR / "fonts.css",
     )
 
 
