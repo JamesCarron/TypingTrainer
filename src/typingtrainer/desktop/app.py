@@ -401,7 +401,15 @@ class Game:
         )
 
     def submit(self):
-        """Hand the line to the engine and show what it said."""
+        """Hand the line to the engine and show what it said.
+
+        An empty buffer is not an attempt: pressing Enter twice used to log a
+        0% failure, dragging the mean accuracy down and writing a record with
+        an empty user_input -- the shape of the corrupt legacy row that
+        analysis._implausible now has to exclude.
+        """
+        if not self.user_input:
+            return
         elapsed = datetime.now() - self.time_start
         duration = round(elapsed.seconds + elapsed.microseconds / 1e6, 3)
         result = self.session.submit_line(

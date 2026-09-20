@@ -9,6 +9,19 @@
  * (docs/UI_Refresh_Notes.md, Proposal A): a real caret, chrome that fades
  * while typing, a dimmed previous line, live WPM/accuracy, and stop-on-error.
  *
+ * Rewritten again 2026-09-20 for "Wings v2"
+ * (docs/mockups/UI_Mockup_Wings_v2.html):
+ *   - permanent left/right rails that expand in place into drawers (a panel
+ *     overlays the line, the line keeps its full measure)
+ *   - the right rail's WPM/ACC recompute live while typing, throttled to a
+ *     150ms interval rather than per keystroke, with the grace period
+ *     removed entirely
+ *   - the line's width comes from the `measure_ch` setting, applied as
+ *     --measure on the stage
+ *   - deep analysis is a moment: finishing a session opens a full-stage
+ *     review (GET /api/review, every field optional) whose only door out is
+ *     "See everything" to /stats
+ *
  * `diff()` below must have exactly the semantics of
  * `typingtrainer.scoring.compare_lines`: itertools.zip_longest(guess, answer,
  * fillvalue=False), so the result is as long as the LONGER string. It is
@@ -100,13 +113,26 @@ if (typeof window !== "undefined") {
 
     let isTyping = false; // true from the first keystroke of the current line
     let idleTimer = null; // clears the caret's "solid while typing" state
-    let liveStatsTimer = null; // ticks the live WPM readout while idle-typing
+    let railTimer = null; // throttles the right rail's live recompute (~6/s)
     let flashTimer = null; // clears a transient char-flash / shake
 
     let lastPosition = null; // for showing the previous line, best-effort
     let lastTargetLine = null;
     let previousLineText = null;
     let flashIndex = null; // index in the current line to show a char-flash
+
+    // The right rail freezes on the finished line's server-returned values
+    // the instant a line is submitted, and holds them until the very next
+    // keystroke -- it never shows a number the server did not say.
+    let heldRailValues = null; // {wpm, accuracy, passed} | null
+
+    // The last submitted attempt's keystrokes, kept only to compute the
+    // display-only "stalls" figure in the right drawer -- never resent,
+    // never scored again.
+    let lastAttemptKeystrokes = [];
+
+    let drawerOpen = null; // "left" | "right" | null
+    let reviewOpen = false;
 
     const els = {};
 
@@ -117,46 +143,92 @@ if (typeof window !== "undefined") {
     document.addEventListener("DOMContentLoaded", init);
 
     async function init() {
+      els.stage = $("stage");
+      els.wingLeft = $("wing-left");
+      els.wingRight = $("wing-right");
+      els.centre = $("centre");
       els.typingArea = $("typing-area");
       els.currentLine = $("current-line");
       els.previousLine = $("previous-line");
       els.upcomingLines = $("upcoming-lines");
       els.caret = $("caret");
-      els.liveStats = $("live-stats");
       els.capslock = $("capslock-warning");
       els.instructions = $("instructions");
-      els.textName = $("text-name");
-      els.positionLabel = $("position-label");
-      els.criteria = $("criteria-display");
-      els.prevBtn = $("prev-btn");
-      els.nextBtn = $("next-btn");
-      els.settingsBtn = $("settings-btn");
-      els.settingsPanel = $("settings-panel");
+      els.errorBar = $("error-bar");
+
+      // Left rail / drawer.
+      els.railStep = $("rail-step");
+      els.railTicks = $("rail-ticks");
+      els.railLine = $("rail-line");
+      els.railTotal = $("rail-total");
+      els.panelTextName = $("panel-text-name");
+      els.panelPosition = $("panel-position");
+      els.panelLastResult = $("panel-last-result");
       els.textPicker = $("text-picker");
       els.addTextBtn = $("add-text-btn");
+      els.prevBtn = $("prev-btn");
+      els.nextBtn = $("next-btn");
+      els.measureInput = $("measure-input");
+      els.measureVal = $("measure-val");
       els.resetHistoryBtn = $("reset-history-btn");
-      els.errorBar = $("error-bar");
       els.finishSessionBtn = $("finish-session-btn");
-      els.sessionSummaryOverlay = $("session-summary-overlay");
-      els.sessionSummaryBody = $("session-summary-body");
-      els.sessionSummaryClose = $("session-summary-close");
+
+      // Right rail / drawer.
+      els.railWpm = $("rail-wpm");
+      els.railAcc = $("rail-acc");
+      els.railWorst = $("rail-worst");
+      els.detailWpm = $("detail-wpm");
+      els.detailAcc = $("detail-acc");
+      els.detailVerdict = $("detail-verdict");
+      els.detailCriteriaLabel = $("detail-criteria-label");
+      els.detailStalls = $("detail-stalls");
+      els.keystrip = $("keystrip");
+
+      // Review.
+      els.review = $("review");
+      els.reviewSession = $("review-session");
+      els.reviewWpm = $("review-wpm");
+      els.reviewAccuracyLine = $("review-accuracy-line");
+      els.reviewMoved = $("review-moved");
+      els.reviewRecommendation = $("review-recommendation");
+      els.reviewStartBtn = $("review-start-btn");
+      els.reviewBackBtn = $("review-back-btn");
+
+      buildKeystrip();
 
       els.prevBtn.addEventListener("click", () => movePosition(-1));
       els.nextBtn.addEventListener("click", () => movePosition(1));
-      els.positionLabel.addEventListener("click", promptJump);
-      els.settingsBtn.addEventListener("click", toggleSettings);
+      els.panelPosition.addEventListener("click", promptJump);
       els.textPicker.addEventListener("change", onTextPicked);
       els.addTextBtn.addEventListener("click", onAddText);
       els.resetHistoryBtn.addEventListener("click", onResetHistory);
-      els.finishSessionBtn.addEventListener("click", showSessionSummary);
-      els.sessionSummaryClose.addEventListener("click", hideSessionSummary);
-      els.sessionSummaryOverlay.addEventListener("click", (event) => {
-        if (event.target === els.sessionSummaryOverlay) hideSessionSummary();
+      els.finishSessionBtn.addEventListener("click", openReview);
+      els.reviewStartBtn.addEventListener("click", startNextFromReview);
+      els.reviewBackBtn.addEventListener("click", closeReview);
+
+      for (const wing of [els.wingLeft, els.wingRight]) {
+        wing.addEventListener("click", (event) => {
+          if (event.target.closest("input, select, button, a, label")) return;
+          const side = wing.dataset.wing;
+          if (drawerOpen === side) closeDrawer();
+          else openDrawer(side);
+        });
+      }
+
+      els.centre.addEventListener("click", () => {
+        if (reviewOpen) return;
+        if (drawerOpen) closeDrawer();
+        focusTypingArea();
       });
 
       for (const input of document.querySelectorAll("[data-setting]")) {
         input.addEventListener("change", onSettingChanged);
       }
+      // Live preview while dragging the line-width slider -- purely visual
+      // until "change" fires and persists it like any other setting.
+      els.measureInput.addEventListener("input", () => {
+        applyMeasure(els.measureInput.value);
+      });
 
       window.addEventListener("resize", positionCaret);
 
@@ -171,6 +243,7 @@ if (typeof window !== "undefined") {
       });
 
       await Promise.all([refreshState(), refreshTexts()]);
+      refreshWorstKeys();
       focusTypingArea();
     }
 
@@ -192,10 +265,24 @@ if (typeof window !== "undefined") {
 
     function setTyping(value) {
       isTyping = value;
-      document.body.classList.toggle("typing", value);
-      if (!value) {
-        stopLiveStatsTicker();
+      if (value) {
+        startRailTicker();
+      } else {
+        stopRailTicker();
       }
+    }
+
+    // ---- drawers --------------------------------------------------------------
+
+    function openDrawer(side) {
+      els.stage.classList.remove("open-left", "open-right");
+      els.stage.classList.add(side === "left" ? "open-left" : "open-right");
+      drawerOpen = side;
+    }
+
+    function closeDrawer() {
+      els.stage.classList.remove("open-left", "open-right");
+      drawerOpen = null;
     }
 
     // ---- rendering ------------------------------------------------------------
@@ -204,20 +291,24 @@ if (typeof window !== "undefined") {
       return (snapshot && snapshot.visible_lines && snapshot.visible_lines[0]) || "";
     }
 
+    function applyMeasure(chValue) {
+      const n = parseInt(chValue, 10);
+      const clamped = Number.isFinite(n) ? Math.min(86, Math.max(50, n)) : 78;
+      els.stage.style.setProperty("--measure", clamped + "ch");
+      els.measureInput.value = String(clamped);
+      els.measureVal.textContent = String(clamped);
+    }
+
     function render() {
       if (!snapshot) return;
-
-      els.textName.textContent = `"${snapshot.text_name}"`;
-      const pct = (snapshot.progress * 100).toFixed(1);
-      els.positionLabel.textContent = `${snapshot.position}/${snapshot.line_count} (${pct}%)`;
 
       // Best-effort "previous line": only known when this snapshot is one
       // line further on than the last one we rendered (the normal forward
       // flow of typing through the book). A jump, a text switch or a manual
       // reposition simply has no previous line to show -- Session does not
       // expose one, and this view may not invent state the engine does not
-      // hold (docs/Contracts.md: "no state in the page the server does not
-      // also hold" -- this is display-only best effort, never submitted).
+      // also hold (docs/Contracts.md: "no state in the page the server does
+      // not also hold" -- this is display-only best effort, never submitted).
       const target = currentTarget();
       if (lastPosition !== null) {
         if (snapshot.position === lastPosition + 1) {
@@ -229,29 +320,41 @@ if (typeof window !== "undefined") {
       lastPosition = snapshot.position;
       lastTargetLine = target;
 
-      renderCriteria();
+      renderLeftRail();
       renderPreviousLine();
       renderLines();
       renderInstructions();
       renderSettingsForm();
-      renderLiveStats();
+      updateLiveRail();
     }
 
-    function renderCriteria() {
-      const s = snapshot.settings;
-      els.criteria.innerHTML = "";
-      if (!s.show_criteria) return;
-      if (s.require_accuracy) {
-        const span = document.createElement("span");
-        span.className = "criterion";
-        span.textContent = `Min Acc: ${(s.min_accuracy * 100).toFixed(0)}%`;
-        els.criteria.appendChild(span);
+    function renderLeftRail() {
+      const pct = snapshot.line_count ? (snapshot.progress * 100) : 0;
+      els.railStep.textContent = `${pct.toFixed(0)}%`;
+      els.railLine.textContent = String(snapshot.position);
+      els.railTotal.textContent = String(snapshot.line_count);
+
+      els.railTicks.innerHTML = "";
+      const totalTicks = 10;
+      const filled = Math.min(totalTicks, Math.floor((snapshot.progress || 0) * totalTicks));
+      for (let i = 0; i < totalTicks; i++) {
+        const tick = document.createElement("i");
+        if (i < filled) tick.className = "done";
+        else if (i === filled) tick.className = "now";
+        els.railTicks.appendChild(tick);
       }
-      if (s.require_wpm) {
-        const span = document.createElement("span");
-        span.className = "criterion";
-        span.textContent = `Min WPM: ${s.min_wpm.toFixed(0)}`;
-        els.criteria.appendChild(span);
+
+      els.panelTextName.textContent = `"${snapshot.text_name}"`;
+      els.panelPosition.textContent =
+        `line ${snapshot.position}/${snapshot.line_count} (${pct.toFixed(1)}%) — click to jump`;
+
+      const last = snapshot.last_result;
+      if (last) {
+        els.panelLastResult.textContent = last.passed
+          ? `Prev: ${last.wpm.toFixed(0)} wpm, ${(last.accuracy * 100).toFixed(1)}% acc`
+          : `Prev: FAIL — ${(last.accuracy * 100).toFixed(0)}% acc, ${last.wpm.toFixed(0)} wpm`;
+      } else {
+        els.panelLastResult.textContent = "";
       }
     }
 
@@ -302,7 +405,7 @@ if (typeof window !== "undefined") {
       const spans = els.currentLine.children;
       let left = 0;
       let top = 0;
-      let height = parseFloat(getComputedStyle(els.currentLine).lineHeight) || 30;
+      let height = parseFloat(getComputedStyle(els.currentLine).lineHeight) || 28;
       const idx = typed.length;
       if (spans.length === 0) {
         left = 0;
@@ -351,6 +454,7 @@ if (typeof window !== "undefined") {
       const s = snapshot.settings;
       for (const input of document.querySelectorAll("[data-setting]")) {
         const key = input.dataset.setting;
+        if (key === "measure_ch") continue; // handled separately below
         if (!(key in s)) continue;
         if (input.type === "checkbox") {
           input.checked = !!s[key];
@@ -362,20 +466,31 @@ if (typeof window !== "undefined") {
           }
         }
       }
+      // measure_ch may not exist yet on an older settings payload -- default
+      // to the prototype's 78 so the page still works while it lands.
+      const measure = s.measure_ch != null ? s.measure_ch : 78;
+      applyMeasure(measure);
     }
 
-    // ---- live WPM / accuracy (display only, see docs/Contracts.md) --------
+    // ---- live rail: WPM / ACC recompute while typing, throttled ------------
+    //
+    // Rule that does not bend: this is display only. Nothing here is ever
+    // sent anywhere; the authoritative score always comes back from
+    // POST /api/attempt, and heldRailValues (below) is exactly that
+    // server-returned value, just held on screen until the next keystroke.
 
-    function renderLiveStats() {
-      if (!els.liveStats) return;
-      const s = snapshot.settings;
+    function updateLiveRail() {
+      const s = snapshot && snapshot.settings;
       if (!s || !s.live_stats) {
-        els.liveStats.hidden = true;
+        setRailFigures(null, null);
         return;
       }
-      els.liveStats.hidden = false;
+      if (heldRailValues) {
+        setRailFigures(heldRailValues.wpm, heldRailValues.accuracy, heldRailValues.passed);
+        return;
+      }
       if (!isTyping || !lineStart || typed.length === 0) {
-        els.liveStats.textContent = "";
+        setRailFigures(null, null);
         return;
       }
       const target = currentTarget();
@@ -383,19 +498,102 @@ if (typeof window !== "undefined") {
       const correct = matches.slice(0, typed.length).filter(Boolean).length;
       const elapsedMinutes = Math.max(Date.now() - lineStart, 1) / 60000;
       const wpm = (typed.length / 5) / elapsedMinutes;
-      const accuracy = (correct / typed.length) * 100;
-      els.liveStats.textContent = `${wpm.toFixed(0)} wpm · ${accuracy.toFixed(0)}%`;
+      const accuracy = correct / typed.length;
+      setRailFigures(wpm, accuracy);
     }
 
-    function startLiveStatsTicker() {
-      stopLiveStatsTicker();
-      liveStatsTimer = window.setInterval(renderLiveStats, 250);
+    // Fixed-width, tabular-numeral slots (see page.css .rf .v) so the rail
+    // never shudders as the digit count changes underneath it.
+    function setRailFigures(wpm, accuracy, passed) {
+      if (wpm == null || accuracy == null) {
+        els.railWpm.textContent = "—";
+        els.railWpm.className = "v dash";
+        els.railAcc.textContent = "—";
+        els.railAcc.className = "v sm dash";
+        return;
+      }
+      els.railWpm.textContent = wpm.toFixed(0);
+      els.railAcc.textContent = (accuracy * 100).toFixed(0) + "%";
+      if (passed === undefined) {
+        els.railWpm.className = "v";
+        els.railAcc.className = "v sm";
+      } else {
+        els.railWpm.className = "v" + (passed ? " good" : "");
+        els.railAcc.className = "v sm" + (passed ? " good" : " bad");
+      }
     }
 
-    function stopLiveStatsTicker() {
-      if (liveStatsTimer) {
-        window.clearInterval(liveStatsTimer);
-        liveStatsTimer = null;
+    function startRailTicker() {
+      stopRailTicker();
+      updateLiveRail();
+      // ~6.7 updates/sec: smooth without being a per-keystroke reflow.
+      railTimer = window.setInterval(updateLiveRail, 150);
+    }
+
+    function stopRailTicker() {
+      if (railTimer) {
+        window.clearInterval(railTimer);
+        railTimer = null;
+      }
+    }
+
+    // ---- worst keys (right rail squares + drawer keyboard) -----------------
+    //
+    // Sourced from GET /api/analysis (already implemented server-side; this
+    // page only reads it), specifically weak_points.keystroke_character_errors,
+    // which counts every keystroke against what was expected -- including
+    // corrected mistakes -- rather than only what survived into a submitted
+    // line. Refreshed at load and after every submitted attempt, since it
+    // only changes when history does.
+
+    const KEYBOARD_ROWS = ["qwertyuiop", "asdfghjkl;", "zxcvbnm,.'"];
+    let worstChars = []; // top few {char, error_rate}, most severe first
+
+    function buildKeystrip() {
+      els.keystrip.innerHTML = "";
+      for (const row of KEYBOARD_ROWS) {
+        for (const ch of row) {
+          const i = document.createElement("i");
+          i.textContent = ch;
+          i.dataset.char = ch;
+          els.keystrip.appendChild(i);
+        }
+      }
+    }
+
+    function heatClass(rank) {
+      return rank === 0 ? "h3" : rank === 1 ? "h2" : "h1";
+    }
+
+    async function refreshWorstKeys() {
+      try {
+        const report = await API.get("/api/analysis");
+        const rows =
+          (report &&
+            report.weak_points &&
+            report.weak_points.keystroke_character_errors &&
+            report.weak_points.keystroke_character_errors.characters) ||
+          [];
+        worstChars = rows.filter((r) => r.error_rate > 0).slice(0, 3);
+      } catch (err) {
+        worstChars = [];
+      }
+      renderWorstKeys();
+    }
+
+    function renderWorstKeys() {
+      els.railWorst.innerHTML = "";
+      worstChars.forEach((row, i) => {
+        const el = document.createElement("i");
+        el.className = heatClass(i);
+        el.textContent = row.char;
+        els.railWorst.appendChild(el);
+      });
+
+      const byChar = new Map(worstChars.map((row, i) => [row.char, heatClass(i)]));
+      for (const el of els.keystrip.children) {
+        const cls = byChar.get(el.dataset.char);
+        el.className = cls || "";
       }
     }
 
@@ -454,8 +652,10 @@ if (typeof window !== "undefined") {
       const capsOn = event.getModifierState && event.getModifierState("CapsLock");
       els.capslock.hidden = !capsOn;
 
-      // Do not steal keystrokes typed into a settings field or the jump prompt.
-      if (event.target !== els.typingArea && event.target.tagName !== "BODY") {
+      // Do not steal ordinary keystrokes typed into a settings field or the
+      // jump prompt -- but Escape always falls through, so it can close a
+      // drawer or the review even while a field has focus.
+      if (event.key !== "Escape" && event.target !== els.typingArea && event.target.tagName !== "BODY") {
         if (event.target.matches && event.target.matches("input, select, textarea")) {
           return;
         }
@@ -463,21 +663,34 @@ if (typeof window !== "undefined") {
 
       if (!snapshot) return;
 
-      if (!els.sessionSummaryOverlay.hidden) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          hideSessionSummary();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        // Esc climbs down one level at a time: the review, then a drawer,
+        // then whatever Esc already did (abort the line, or open the review
+        // from READY).
+        if (reviewOpen) {
+          closeReview();
+          return;
         }
+        if (drawerOpen) {
+          closeDrawer();
+          focusTypingArea();
+          return;
+        }
+        if (snapshot.state === "READY") {
+          openReview();
+          return;
+        }
+        abortLine();
         return;
       }
+
+      if (reviewOpen) return;
 
       if (snapshot.state === "READY") {
         if (event.key === "Enter") {
           event.preventDefault();
           startLine();
-        } else if (event.key === "Escape") {
-          event.preventDefault();
-          showSessionSummary();
         }
         return;
       }
@@ -489,7 +702,6 @@ if (typeof window !== "undefined") {
         const idx = typed.lastIndexOf(" ");
         typed = idx === -1 ? "" : typed.slice(0, idx + 1);
         renderLines();
-        renderLiveStats();
         return;
       }
 
@@ -498,16 +710,10 @@ if (typeof window !== "undefined") {
         submitLine();
         return;
       }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        abortLine();
-        return;
-      }
       if (event.key === "Backspace") {
         event.preventDefault();
         typed = typed.slice(0, -1);
         renderLines();
-        renderLiveStats();
         return;
       }
       if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -516,9 +722,12 @@ if (typeof window !== "undefined") {
         if (typed === "") {
           lineStart = Date.now();
         }
+        // The instant typing resumes, the rail drops whatever it was
+        // holding (a finished line's figures, or dashes) and starts
+        // recomputing live.
+        heldRailValues = null;
         if (!isTyping) {
           setTyping(true);
-          startLiveStatsTicker();
         }
         markCaretSolid();
 
@@ -538,14 +747,12 @@ if (typeof window !== "undefined") {
           // this mode prevents (docs/UI_Refresh_Notes.md decision 1).
           recordKeystroke(event.key, correct, expected);
           flashOffending(nextIndex);
-          renderLiveStats();
           return;
         }
 
         recordKeystroke(event.key, correct, expected);
         typed += event.key;
         renderLines();
-        renderLiveStats();
       }
     }
 
@@ -556,17 +763,34 @@ if (typeof window !== "undefined") {
       keystrokes = [];
       lineStart = null;
       flashIndex = null;
+      heldRailValues = null;
       setTyping(false);
+      updateLiveRail();
     }
 
     async function startLine() {
+      // Go to GAME locally before the round trip, not after it. A typist who
+      // presses Enter and starts typing immediately -- which is most of them --
+      // would otherwise have every character until the response lands dropped
+      // on the floor by the READY branch of the key handler. The request is
+      // still authoritative: if it fails we put the state back and say so.
+      const previous = snapshot;
+      snapshot = Object.assign({}, snapshot, { state: "GAME" });
+      resetLineBuffers();
+      render();
+      focusTypingArea();
       try {
-        snapshot = await API.post("/api/start");
+        const confirmed = await API.post("/api/start");
+        // Keep whatever the typist has already entered; only the server's view
+        // of the session replaces ours.
+        snapshot = confirmed;
         clearError();
-        resetLineBuffers();
         render();
-        focusTypingArea();
       } catch (err) {
+        snapshot = previous;
+        typed = "";
+        keystrokes = [];
+        render();
         showError(err.message);
       }
     }
@@ -584,23 +808,91 @@ if (typeof window !== "undefined") {
     }
 
     async function submitLine() {
+      // An empty buffer is not an attempt. Pressing Enter twice used to log a
+      // 0% failure, which drags the mean accuracy down and litters the history
+      // with records that have an empty user_input -- exactly the shape of the
+      // corrupt legacy row that analysis._implausible now has to exclude.
+      if (!typed.length) return;
       const durationMs = lineStart ? Date.now() - lineStart : 0;
       const typedFull = keystrokes.map((k) => k.char).join("");
+      const sentKeystrokes = keystrokes.slice();
       try {
         const data = await API.post("/api/attempt", {
           typed: typed,
           duration_ms: durationMs,
           typed_full: typedFull,
-          keystrokes: keystrokes,
+          keystrokes: sentKeystrokes,
         });
         clearError();
         snapshot = data.state;
-        resetLineBuffers();
+        // The right rail freezes on exactly what the server said, and holds
+        // it until the next keystroke -- never a number this page computed.
+        heldRailValues = {
+          wpm: data.result.wpm,
+          accuracy: data.result.accuracy,
+          passed: data.result.passed,
+        };
+        lastAttemptKeystrokes = sentKeystrokes;
+        fillLastLineDetail(data.result, sentKeystrokes);
+        resetLineBuffersKeepHeld();
         render();
         focusTypingArea();
+        refreshWorstKeys();
       } catch (err) {
         showError(err.message);
       }
+    }
+
+    // Like resetLineBuffers, but preserves heldRailValues -- used right after
+    // a submit, where the rail must keep showing the finished line's figures
+    // until the player starts the next one.
+    function resetLineBuffersKeepHeld() {
+      typed = "";
+      keystrokes = [];
+      lineStart = null;
+      flashIndex = null;
+      setTyping(false);
+      updateLiveRail();
+    }
+
+    function fillLastLineDetail(result, sentKeystrokes) {
+      const s = snapshot.settings;
+      els.detailWpm.textContent = result.wpm.toFixed(0);
+      els.detailAcc.textContent = (result.accuracy * 100).toFixed(0) + "%";
+      els.detailAcc.className = "n" + (result.accuracy >= s.min_accuracy ? " good" : " bad");
+
+      let verdict = "not required";
+      let cls = "";
+      if (result.passed) {
+        verdict = "passed";
+        cls = "good";
+      } else if (s.require_accuracy && result.accuracy < s.min_accuracy) {
+        verdict = "accuracy short";
+        cls = "bad";
+      } else if (s.require_wpm && result.wpm < s.min_wpm) {
+        verdict = "too slow";
+        cls = "bad";
+      }
+      els.detailVerdict.textContent = verdict;
+      els.detailVerdict.className = "n" + (cls ? " " + cls : "");
+
+      if (s.show_criteria) {
+        const parts = [];
+        if (s.require_accuracy) parts.push(`${(s.min_accuracy * 100).toFixed(0)}%`);
+        if (s.require_wpm) parts.push(`${s.min_wpm.toFixed(0)} wpm`);
+        els.detailCriteriaLabel.textContent = parts.length ? `against ${parts.join(" · ")}` : "no criteria set";
+      } else {
+        els.detailCriteriaLabel.textContent = "criteria hidden";
+      }
+
+      // Display-only, computed the same way as the mockup's prototype: a
+      // stall is a gap over 500ms between two consecutive keystrokes. Never
+      // sent anywhere, never affects the score.
+      let stalls = 0;
+      for (let i = 1; i < sentKeystrokes.length; i++) {
+        if (sentKeystrokes[i].ms - sentKeystrokes[i - 1].ms > 500) stalls++;
+      }
+      els.detailStalls.textContent = String(stalls);
     }
 
     async function movePosition(delta) {
@@ -632,11 +924,6 @@ if (typeof window !== "undefined") {
       }
     }
 
-    function toggleSettings() {
-      els.settingsPanel.hidden = !els.settingsPanel.hidden;
-      if (!els.settingsPanel.hidden) renderSettingsForm();
-    }
-
     async function onSettingChanged(event) {
       const input = event.target;
       const key = input.dataset.setting;
@@ -645,6 +932,8 @@ if (typeof window !== "undefined") {
         value = input.checked;
       } else if (key === "min_accuracy") {
         value = parseFloat(input.value) / 100.0;
+      } else if (key === "measure_ch") {
+        value = parseInt(input.value, 10);
       } else {
         value = parseFloat(input.value);
       }
@@ -652,9 +941,8 @@ if (typeof window !== "undefined") {
         const settings = await API.post("/api/settings", { [key]: value });
         snapshot.settings = settings;
         clearError();
-        renderCriteria();
         renderSettingsForm();
-        renderLiveStats();
+        updateLiveRail();
       } catch (err) {
         showError(err.message);
       } finally {
@@ -697,91 +985,6 @@ if (typeof window !== "undefined") {
       }
     }
 
-    // ---- session summary (docs/UI_Refresh_Notes.md, decision 4) -----------
-
-    function buildSparkline(values) {
-      if (!values || values.length < 2) return "";
-      const width = 600;
-      const height = 70;
-      const pad = 4;
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const range = max - min || 1;
-      const step = (width - pad * 2) / (values.length - 1);
-      const points = values
-        .map((v, i) => {
-          const x = pad + i * step;
-          const y = height - pad - ((v - min) / range) * (height - pad * 2);
-          return `${x.toFixed(1)},${y.toFixed(1)}`;
-        })
-        .join(" ");
-      return (
-        `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" ` +
-        `aria-label="WPM per line across the session, from ${min.toFixed(0)} to ${max.toFixed(0)}">` +
-        `<polyline points="${points}" fill="none" stroke="var(--tt-accent)" stroke-width="2" />` +
-        `</svg>`
-      );
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement("div");
-      div.textContent = text == null ? "" : String(text);
-      return div.innerHTML;
-    }
-
-    function renderSessionSummary(summary) {
-      if (!summary || summary.lines_completed === 0) {
-        els.sessionSummaryBody.innerHTML =
-          '<p class="summary-empty">No lines typed yet this session. Type a line, then come back.</p>';
-        return;
-      }
-      const wpm = summary.mean_wpm != null ? summary.mean_wpm.toFixed(0) : "–";
-      const acc =
-        summary.mean_accuracy != null ? (summary.mean_accuracy * 100).toFixed(1) + "%" : "–";
-      const best = summary.best_line
-        ? `${summary.best_line.wpm.toFixed(0)} wpm — "${escapeHtml(summary.best_line.line)}"`
-        : "–";
-      const worst = summary.worst_line
-        ? `${summary.worst_line.wpm.toFixed(0)} wpm — "${escapeHtml(summary.worst_line.line)}"`
-        : "–";
-      const minutes = (summary.duration_s / 60).toFixed(1);
-      const spark = buildSparkline(summary.wpm_curve);
-      els.sessionSummaryBody.innerHTML = `
-        <div class="summary-headline">
-          <div><div class="big-stat">${wpm}</div><div class="big-stat-label">mean wpm</div></div>
-          <div><div class="big-stat">${acc}</div><div class="big-stat-label">mean accuracy</div></div>
-        </div>
-        <div class="summary-tiles">
-          <div class="summary-tile"><strong>${summary.lines_completed}</strong>lines completed</div>
-          <div class="summary-tile"><strong>${summary.passed}</strong>passed</div>
-          <div class="summary-tile"><strong>${summary.failed}</strong>failed</div>
-          <div class="summary-tile"><strong>${minutes}m</strong>time typing</div>
-          <div class="summary-tile"><strong>${summary.best_wpm != null ? summary.best_wpm.toFixed(0) : "–"}</strong>best line wpm</div>
-        </div>
-        <div class="summary-lines">
-          <div>Best: ${best}</div>
-          <div>Worst: ${worst}</div>
-        </div>
-        ${spark ? `<div class="sparkline-wrap">${spark}<div class="sparkline-axis-label">wpm per line, in order typed</div></div>` : ""}
-      `;
-    }
-
-    async function showSessionSummary() {
-      els.sessionSummaryOverlay.hidden = false;
-      els.sessionSummaryBody.innerHTML = "Loading&hellip;";
-      try {
-        const summary = await API.get("/api/session_summary");
-        renderSessionSummary(summary);
-      } catch (err) {
-        els.sessionSummaryBody.innerHTML = `<p class="summary-empty">Could not load the session summary: ${escapeHtml(err.message)}</p>`;
-      }
-    }
-
-    function hideSessionSummary() {
-      els.sessionSummaryOverlay.hidden = true;
-      focusTypingArea();
-    }
-
     async function onResetHistory() {
       try {
         const result = await API.post("/api/history/reset", { scope: "current" });
@@ -793,6 +996,137 @@ if (typeof window !== "undefined") {
       } finally {
         focusTypingArea();
       }
+    }
+
+    // ---- review: the closing moment of a session ---------------------------
+    //
+    // GET /api/review's settled shape:
+    //   { session_summary: analysis.session_summary() + "wpm_curve",
+    //     deltas: { has_previous, wpm, accuracy, lines_completed, time_typing_s
+    //               (each {current, previous, delta, direction: up|down|same}),
+    //               worst_category: {category, current_rate, previous_rate,
+    //                                 direction: improved|worse|unchanged} },
+    //     next_action: {message, kind, target, detail},
+    //     streak: {current_streak_days, longest_streak_days} }
+    // Still read defensively field-by-field: a first-ever session returns
+    // has_previous=false with every delta/direction null, and this renders
+    // that as a dash / an omitted "what moved" block rather than throwing or
+    // showing a false "0".
+
+    async function openReview() {
+      reviewOpen = true;
+      closeDrawer();
+      els.review.hidden = false;
+      renderReview(null);
+      try {
+        const data = await API.get("/api/review");
+        renderReview(data);
+      } catch (err) {
+        renderReview(null);
+      }
+    }
+
+    function closeReview() {
+      reviewOpen = false;
+      els.review.hidden = true;
+      focusTypingArea();
+    }
+
+    async function startNextFromReview() {
+      closeReview();
+      if (snapshot && snapshot.state === "READY") {
+        await startLine();
+      } else {
+        focusTypingArea();
+      }
+    }
+
+    // trendClass: "good" | "down" | "flat" | "" (neutral/unknown)
+    function addMovedTile(value, label, trendClass) {
+      const div = document.createElement("div");
+      const n = document.createElement("div");
+      n.className = "n" + (trendClass ? " " + trendClass : " flat");
+      n.textContent = value;
+      const l = document.createElement("div");
+      l.className = "l";
+      l.textContent = label;
+      div.appendChild(n);
+      div.appendChild(l);
+      els.reviewMoved.appendChild(div);
+    }
+
+    // up/down/same numeric deltas: up is good, down is bad -- true for wpm,
+    // accuracy, lines_completed and time_typing_s.
+    function trendClassForDirection(direction) {
+      if (direction === "up") return "good";
+      if (direction === "down") return "down";
+      if (direction === "same") return "flat";
+      return "";
+    }
+
+    // improved/worse/unchanged: an error-rate category, where "improved"
+    // means the number went DOWN -- the opposite sense from up/down above.
+    function trendClassForCategoryDirection(direction) {
+      if (direction === "improved") return "good";
+      if (direction === "worse") return "down";
+      if (direction === "unchanged") return "flat";
+      return "";
+    }
+
+    function signed(value, digits, suffix) {
+      if (value == null || Number.isNaN(value)) return "—";
+      const sign = value > 0 ? "+" : "";
+      return `${sign}${value.toFixed(digits)}${suffix || ""}`;
+    }
+
+    function renderReview(data) {
+      data = data || {};
+      const summary = data.session_summary || {};
+      const deltas = data.deltas || {};
+      const nextAction = data.next_action || {};
+      const streak = data.streak || {};
+
+      const bits = [];
+      if (summary.duration_s != null) bits.push(`${(summary.duration_s / 60).toFixed(1)} minutes`);
+      if (summary.lines_completed != null) bits.push(`${summary.lines_completed} lines`);
+      els.reviewSession.textContent = bits.length ? bits.join(" · ") : "—";
+
+      els.reviewWpm.textContent = summary.mean_wpm != null ? Math.round(summary.mean_wpm) : "—";
+
+      const accBits = [];
+      if (summary.mean_accuracy != null) accBits.push(`${(summary.mean_accuracy * 100).toFixed(1)}% accuracy`);
+      if (summary.passed != null) accBits.push(`${summary.passed} passed`);
+      if (summary.failed != null) accBits.push(`${summary.failed} failed`);
+      els.reviewAccuracyLine.textContent = accBits.length ? accBits.join(", ") : "—";
+
+      els.reviewMoved.innerHTML = "";
+      if (deltas.has_previous) {
+        const w = deltas.wpm || {};
+        addMovedTile(signed(w.delta, 0), "wpm vs last", trendClassForDirection(w.direction));
+
+        const a = deltas.accuracy || {};
+        addMovedTile(
+          signed(a.delta != null ? a.delta * 100 : null, 1, "%"),
+          "accuracy vs last",
+          trendClassForDirection(a.direction)
+        );
+
+        const worst = deltas.worst_category || {};
+        if (worst.category) {
+          addMovedTile(
+            worst.current_rate != null ? `${(worst.current_rate * 100).toFixed(1)}%` : "—",
+            worst.direction === "unchanged" ? `${worst.category}, unchanged` : worst.category,
+            trendClassForCategoryDirection(worst.direction)
+          );
+        }
+      }
+      // (Every session, not only a repeat one, gets a streak tile -- it does
+      // not depend on has_previous.)
+      if (streak.current_streak_days != null) {
+        addMovedTile(String(streak.current_streak_days), "day streak", "");
+      }
+
+      els.reviewRecommendation.textContent = nextAction.message || "";
     }
   })();
 }

@@ -121,6 +121,20 @@ Verified end to end on 2026-09-19 by typing a line with a deliberate mistake, co
 
 **One corrupt legacy record was distorting every aggregate.** An attempt stored 1236 wpm with an empty `user_input`, an accuracy of 0.0 and a suspiciously round 1.0 s duration — internally inconsistent, from a code path that no longer exists. It was setting the all-time top-speed tile and flattening the learning curve against its axis. `analysis._implausible` now excludes records above 300 wpm or with a non-positive duration from the aggregates and counts them; the row stays in the store, because nothing here rewrites history. Real top speed is 95.32 wpm, mean 67.44.
 
+## What was built, 2026-09-20
+
+The design rounds settled on **Wings v2 with deep analysis as a moment**, and it is implemented. The mockups that got there are in `docs/mockups/`: `UI_Mockups.html` (five directions), `UI_Mockups_Hybrid.html` (three ways to combine Zen, Coach and Cockpit), `UI_Mockup_Wings.html` (Wings with rails, and the reserve-versus-drawer question) and `UI_Mockup_Wings_v2.html` (the agreed base plus the three homes for the deep analysis). They are working prototypes rather than pictures, because every decision in this sequence was about timing or interaction and neither can be judged from a still.
+
+**The shape that was chosen.** Permanent slim rails down both edges, always present including while typing, every figure labelled (`WPM`, `ACC`, `WORST`, `STEP`, `LINE`) after bare numerals proved ambiguous in an earlier round. The right rail updates live as you type, throttled to about six recomputations a second, in fixed-width tabular slots so the frame cannot shudder as digits change. Clicking a rail expands it into a drawer that overlays the line and dims the centre; the line keeps its full measure, which is itself a setting (`measure_ch`, 50 to 86 characters, default 78). The deep analysis has no door on the rail at all: it is the closing act of a session, a review screen of what moved since last time with one recommended next action, and "See everything" is the only route to `/stats`.
+
+**The grace period never shipped.** It existed in the prototypes so the pause behaviour could be felt, and it was the right idea while the rails appeared and disappeared. Once the rails became permanent and the figures live, it had nothing left to govern, and it was never added to the app.
+
+**Three defects were found by driving the real thing**, none of which the test suite would have caught:
+
+- Pressing Enter and typing immediately lost every character until `POST /api/start` returned, because the key handler waited for the round trip before leaving the READY branch. The page now enters GAME optimistically and reverts if the request fails.
+- Pressing Enter on an empty buffer logged a 0% failed attempt. That drags the mean accuracy down and writes a record with an empty `user_input` — precisely the shape of the corrupt legacy row that `analysis._implausible` already has to exclude, so the store had been accumulating them. Both front ends now refuse an empty submit.
+- The review named "lower" as the worst error category at 0.0%, because within one session every category ties at zero and the tie-break fell back to alphabetical order. It now requires an actual error before naming a category, and says nothing when the session was clean.
+
 ## Decisions (2026-09-19)
 
 All four settled at the end of the research session. They are ambitious on purpose: the whole set was chosen, not a subset.

@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TypingTrainer — Wings v2, and where deep analysis lives</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---------------------------------------------------------------------------
+   TypingTrainer — Wings v2. 2026-09-20.
+
+   Settled since v1:
+     · drawer, not reserved space -- the line keeps its full measure and an
+       expanding panel slides over the top, dimming the text behind
+     · the line's width is a setting, from 50 characters up to nearly the rails
+     · the wings are permanent: the rails are always there, including while
+       typing. The grace period no longer decides whether the furniture appears,
+       only whether the NUMBERS on it do -- which is the part that would
+       interrupt if it arrived mid-line
+     · the right rail is labelled explicitly: WPM, ACC, WORST, not bare figures
+
+   Open question this file answers three ways: where does the deeper analysis
+   live -- a place, a layer, or a moment.
+
+   Working prototypes. Self-contained: no CDN, no libraries, no web fonts.
+--------------------------------------------------------------------------- */
+:root {
+  --tt-bg: #f4f6f7; --tt-surface: #ffffff; --tt-ink: #14171a;
+  --tt-ink-secondary: #5a646e; --tt-sub: #aab3bc; --tt-line: #dde3e8;
+  --tt-accent: #0f7f79; --tt-on-accent: #ffffff; --tt-incorrect: #c0392b;
+  --tt-warn: #b5761f; --tt-good: #2e7d5b;
+  --page-bg: #eceff1; --page-ink: #14171a; --page-muted: #5a646e; --frame-line: #ccd4da;
+  --rail: 70px; --panel: 244px; --measure: 78ch;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+    --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+    --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+    --tt-warn: #d99a43; --tt-good: #4fb78a;
+    --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+  }
+}
+:root[data-theme="dark"] {
+  --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+  --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+  --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+  --tt-warn: #d99a43; --tt-good: #4fb78a;
+  --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page-bg); color: var(--page-ink); font-family: var(--sans); line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 44px 24px 80px; }
+h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--page-muted); max-width: 78ch; margin: 0 0 16px; }
+.howto { border: 1px dashed var(--frame-line); border-radius: 8px; padding: 12px 16px; font-size: 14px; color: var(--page-muted); margin: 0 0 30px; max-width: 78ch; }
+.howto b { color: var(--page-ink); }
+kbd { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--frame-line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; background: var(--tt-surface); }
+h2 { font-size: 20px; margin: 44px 0 2px; }
+h2 .num { color: var(--tt-accent); margin-right: 10px; font-variant-numeric: tabular-nums; }
+.thesis { color: var(--page-muted); max-width: 80ch; margin: 0 0 14px; }
+
+.frame { border: 1px solid var(--frame-line); border-radius: 10px; overflow: hidden; background: var(--tt-bg); }
+.frame-bar { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--tt-line); background: var(--tt-surface); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tt-line); }
+.frame-bar .url { margin-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary); }
+.frame-bar .state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tt-sub); }
+.frame-bar .state.armed { color: var(--tt-warn); }
+.frame-bar .state.shown { color: var(--tt-accent); }
+.controls { display: flex; align-items: center; gap: 14px; margin: 12px 2px 0; font-size: 13px; color: var(--page-muted); flex-wrap: wrap; }
+.controls input[type=range] { width: 170px; accent-color: var(--tt-accent); }
+.controls .val { font-family: var(--mono); color: var(--page-ink); min-width: 5em; }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; margin: 14px 2px 0; }
+.notes div { font-size: 14px; }
+.notes b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--page-muted); margin-bottom: 2px; }
+
+/* ---- stage ---------------------------------------------------------------- */
+.stage { position: relative; min-height: 430px; overflow: hidden; }
+.zen {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px;
+  /* Drawer mode: the centre clears the RAILS only. A panel slides over the top. */
+  padding: 34px calc(var(--rail) + 18px);
+  transition: opacity 200ms ease;
+}
+.stage.open .zen { opacity: 0.3; }
+.ghost { font-family: var(--mono); font-size: 13px; color: var(--tt-sub); opacity: 0.4; text-align: center; max-width: var(--measure); }
+.line { font-family: var(--mono); font-size: 20px; line-height: 1.7; text-align: center; max-width: var(--measure); outline: none; cursor: text; }
+.line .ok { color: var(--tt-ink); }
+.line .bad { color: var(--tt-incorrect); text-decoration: underline; text-underline-offset: 3px; }
+.line .pending { color: var(--tt-sub); }
+.line .caret { display: inline-block; width: 2px; height: 1.05em; vertical-align: text-bottom; background: var(--tt-accent); margin: 0 -1px; animation: blink 1.05s step-end infinite; }
+.line.done .caret { display: none; }
+@keyframes blink { 50% { opacity: 0; } }
+.hint { font-family: var(--mono); font-size: 11px; color: var(--tt-sub); }
+.dots { display: flex; gap: 5px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--tt-line); }
+.dots i.on { background: var(--tt-accent); }
+.dots i.half { background: var(--tt-sub); }
+
+/* ---- wings: permanent rails, panels on selection --------------------------- */
+.wing {
+  position: absolute; top: 0; bottom: 0; width: var(--rail); background: var(--tt-surface);
+  border-color: var(--tt-line); border-style: solid; border-width: 0; overflow: hidden; cursor: pointer;
+  transition: width 240ms cubic-bezier(.22,.8,.3,1), box-shadow 240ms ease;
+}
+.wing.left { left: 0; border-right-width: 1px; }
+.wing.right { right: 0; border-left-width: 1px; }
+.stage.open-left .wing.left, .stage.open-right .wing.right { width: var(--panel); box-shadow: 0 0 24px rgba(0,0,0,0.10); }
+.wing:hover { background: color-mix(in srgb, var(--tt-accent) 4%, var(--tt-surface)); }
+
+.rail { position: absolute; inset: 0; width: var(--rail); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 12px 4px; transition: opacity 150ms ease; }
+.stage.open-left .wing.left .rail, .stage.open-right .wing.right .rail { opacity: 0; pointer-events: none; }
+/* Every figure on a rail is labelled. v1 showed bare numbers and they read as
+   ambiguous -- 12 could have been anything. */
+.rf { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.rf .k { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--tt-sub); }
+.rf .v { font-family: var(--mono); font-size: 17px; line-height: 1.05; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.rf .v.sm { font-size: 13px; }
+.rf .v.good { color: var(--tt-good); } .rf .v.bad { color: var(--tt-incorrect); }
+/* the numbers fade in after the grace period; the rail itself never moves */
+.rf.metric { opacity: 0; transform: translateY(3px); transition: opacity 240ms ease, transform 240ms ease; }
+.stage.shown .rf.metric { opacity: 1; transform: none; }
+.rail .ticks { display: flex; gap: 3px; }
+.rail .ticks i { width: 9px; height: 3px; border-radius: 2px; background: var(--tt-line); }
+.rail .ticks i.done { background: var(--tt-accent); }
+.rail .ticks i.now { background: var(--tt-accent); opacity: 0.45; }
+.rail .heat { display: flex; gap: 2px; }
+.rail .heat i { width: 14px; height: 14px; border-radius: 3px; font-family: var(--mono); font-size: 8px; font-style: normal; display: flex; align-items: center; justify-content: center; color: var(--tt-ink); }
+.rail .heat i.h3 { background: color-mix(in srgb, var(--tt-incorrect) 65%, transparent); }
+.rail .heat i.h2 { background: color-mix(in srgb, var(--tt-incorrect) 40%, transparent); }
+.rail .heat i.h1 { background: color-mix(in srgb, var(--tt-incorrect) 18%, transparent); }
+.rail .more { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tt-accent); text-align: center; line-height: 1.3; }
+.rail .divider { width: 22px; height: 1px; background: var(--tt-line); }
+
+.panel { position: absolute; inset: 0; width: var(--panel); padding: 18px 16px; opacity: 0; pointer-events: none; transition: opacity 170ms ease 70ms; overflow-y: auto; }
+.stage.open-left .wing.left .panel, .stage.open-right .wing.right .panel { opacity: 1; pointer-events: auto; }
+.panel h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--tt-ink-secondary); font-weight: 600; display: flex; justify-content: space-between; }
+.panel h4 .close { font-family: var(--mono); font-size: 10px; color: var(--tt-sub); }
+.step { display: flex; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--tt-line); }
+.step:last-of-type { border-bottom: 0; }
+.step .bullet { flex: none; width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--tt-line); font-size: 9.5px; display: flex; align-items: center; justify-content: center; color: var(--tt-ink-secondary); }
+.step.done .bullet { background: var(--tt-accent); border-color: var(--tt-accent); color: var(--tt-on-accent); }
+.step.now .bullet { border-color: var(--tt-accent); color: var(--tt-accent); }
+.step .t { font-size: 13px; color: var(--tt-ink); } .step.now .t { font-weight: 600; }
+.step .s { font-size: 11px; color: var(--tt-ink-secondary); }
+.why { margin-top: 12px; font-size: 11.5px; color: var(--tt-ink-secondary); border-left: 2px solid var(--tt-warn); padding-left: 9px; }
+.btn { font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 6px; border: 1px solid var(--tt-accent); background: var(--tt-accent); color: var(--tt-on-accent); cursor: pointer; margin-top: 12px; }
+.btn.ghost { background: transparent; color: var(--tt-accent); }
+.metric { margin-bottom: 12px; }
+.metric .n { font-family: var(--mono); font-size: 24px; line-height: 1; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.metric .n.good { color: var(--tt-good); } .metric .n.bad { color: var(--tt-incorrect); }
+.metric .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); margin-top: 2px; }
+.keystrip { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 6px; }
+.keystrip i { width: 17px; height: 17px; border-radius: 3px; border: 1px solid var(--tt-line); font-family: var(--mono); font-size: 9px; display: flex; align-items: center; justify-content: center; color: var(--tt-ink-secondary); font-style: normal; }
+.keystrip i.h1 { background: color-mix(in srgb, var(--tt-incorrect) 18%, transparent); }
+.keystrip i.h2 { background: color-mix(in srgb, var(--tt-incorrect) 42%, transparent); color: var(--tt-ink); }
+.keystrip i.h3 { background: color-mix(in srgb, var(--tt-incorrect) 68%, transparent); border-color: transparent; }
+
+/* settings popover, where the measure lives ---------------------------------- */
+.sett { margin-top: 14px; border-top: 1px solid var(--tt-line); padding-top: 12px; }
+.sett label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--tt-ink-secondary); margin-bottom: 7px; }
+.sett input[type=range] { width: 108px; accent-color: var(--tt-accent); }
+.sett .num { font-family: var(--mono); font-size: 11px; color: var(--tt-ink); }
+
+/* ---- deep analysis, option A: a place ------------------------------------- */
+.sheet {
+  position: absolute; inset: 0; background: var(--tt-bg); overflow-y: auto; padding: 20px 26px;
+  opacity: 0; pointer-events: none; transition: opacity 200ms ease;
+}
+.stage.deep .sheet { opacity: 1; pointer-events: auto; }
+.sheet.slide { transform: translateY(12px); transition: opacity 220ms ease, transform 220ms cubic-bezier(.22,.8,.3,1); }
+.stage.deep .sheet.slide { transform: none; }
+.sheet-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; }
+.sheet-head h3 { margin: 0; font-size: 17px; }
+.sheet-head .back { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--tt-accent); cursor: pointer; }
+.tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
+.tile { border: 1px solid var(--tt-line); border-radius: 7px; padding: 8px 10px; background: var(--tt-surface); }
+.tile .n { font-family: var(--mono); font-size: 18px; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.tile .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--tt-ink-secondary); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.blk h5 { margin: 0 0 7px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); }
+table.mini { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.mini td { padding: 3px 0; border-bottom: 1px solid var(--tt-line); }
+table.mini td.m { font-family: var(--mono); }
+table.mini td.r { text-align: right; color: var(--tt-ink-secondary); font-family: var(--mono); }
+.bar { height: 7px; border-radius: 4px; background: var(--tt-line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--tt-incorrect); }
+.catrow { display: grid; grid-template-columns: 62px 1fr 46px; gap: 8px; align-items: center; font-size: 11.5px; margin-bottom: 5px; }
+.catrow .c { font-family: var(--mono); color: var(--tt-ink-secondary); }
+.catrow .v { font-family: var(--mono); color: var(--tt-ink-secondary); text-align: right; font-size: 10.5px; }
+
+/* option C: the review moment ------------------------------------------------ */
+.review { position: absolute; inset: 0; background: var(--tt-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 30px; opacity: 0; pointer-events: none; transition: opacity 240ms ease; }
+.stage.review-on .review { opacity: 1; pointer-events: auto; }
+.review .big { font-family: var(--mono); font-size: 46px; line-height: 1; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.review .sub { font-family: var(--mono); font-size: 12.5px; color: var(--tt-ink-secondary); }
+.review .moved { display: flex; gap: 26px; margin-top: 4px; }
+.review .moved div { text-align: center; }
+.review .moved .n { font-family: var(--mono); font-size: 19px; color: var(--tt-good); }
+.review .moved .n.down { color: var(--tt-incorrect); }
+.review .moved .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--tt-ink-secondary); }
+.review .acts { display: flex; gap: 9px; margin-top: 6px; }
+.footer { color: var(--page-muted); font-size: 13.5px; border-top: 1px solid var(--frame-line); padding-top: 18px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Wings v2 — permanent rails, drawer panels, and three homes for the deep analysis</h1>
+<p class="lede">Everything settled from the last round is in: the panel overlays as a drawer so the line keeps its full measure, the measure itself is a setting, the rails are permanent rather than appearing after a pause, and every figure on the right rail is labelled. The grace period still exists but it now governs one thing only — whether the <em>numbers</em> arrive, which is the part that would interrupt mid-line. Below that, the same base three ways, answering the open question: where does the deeper analysis live.</p>
+
+<div class="howto">
+  <b>Live.</b> Click a line and type — <kbd>Enter</kbd> finishes, <kbd>Esc</kbd> resets or closes. Click either rail to open its drawer; the left one holds the session plan <em>and the settings</em>, including the line width. Each of the three options below has its own working affordance for the deep analysis — labelled on the rail, so you can see how you would reach it.
+</div>
+
+<h2><span class="num">0</span>The base</h2>
+<p class="thesis">The rails are always there. While you type, the right rail shows its labels with the figures held back; when you stop and the grace period elapses, the numbers fade up in place — the furniture does not move, so there is nothing to catch your eye mid-line. <code>WPM</code>, <code>ACC</code> and <code>WORST</code> are spelled out, because bare numerals on a 46-pixel rail read as ambiguous in v1.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-delay="900" data-deep="none">
+
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="now"></i><i></i><i></i></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">line</span><span class="v sm">347</span></div>
+        <div class="rf"><span class="k">of</span><span class="v sm">444</span></div>
+        <div class="divider"></div>
+        <div class="more">plan<br>&amp; settings ›</div>
+      </div>
+      <div class="panel">
+        <h4>Session · 20 min <span class="close">esc</span></h4>
+        <div class="step done"><i class="bullet">✓</i><div><div class="t">Warm-up</div><div class="s">quotes, semicolons</div></div></div>
+        <div class="step now"><i class="bullet">2</i><div><div class="t">The book</div><div class="s">lines 347–359 · 1 done</div></div></div>
+        <div class="step"><i class="bullet">3</i><div><div class="t">Hard lines</div><div class="s">2 picked for your weak keys</div></div></div>
+        <div class="step"><i class="bullet">4</i><div><div class="t">Review</div><div class="s">what moved today</div></div></div>
+        <p class="why">Quotes are your worst category at 5%. Two of the lines ahead are dense in them.</p>
+        <div class="sett">
+          <h4 style="margin-bottom:8px">Display</h4>
+          <label>line width <span><input type="range" min="50" max="86" step="1" value="78" data-measure> <span class="num" data-measure-val>78</span></span></label>
+          <label>feedback delay <span><input type="range" min="0" max="3000" step="100" value="900" data-delay-input> <span class="num" data-delay-val>900</span></span></label>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf metric"><span class="k">wpm</span><span class="v" data-rail-wpm>—</span></div>
+        <div class="rf metric"><span class="k">acc</span><span class="v sm" data-rail-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf metric"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="divider"></div>
+        <div class="more">last line ›</div>
+      </div>
+      <div class="panel">
+        <h4>Last line <span class="close">esc</span></h4>
+        <div class="metric"><div class="n" data-wpm>—</div><div class="l">words per minute · best 95</div></div>
+        <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+        <div class="metric"><div class="n" data-verdict style="font-size:14px">—</div><div class="l">against 99% · 60 wpm</div></div>
+        <div class="metric"><div class="n" data-stalls style="font-size:18px">—</div><div class="l">stalls over 500 ms</div></div>
+        <h4 style="margin-top:16px">Worst keys · this book</h4>
+        <div class="keystrip">
+          <i>q</i><i>w</i><i class="h1">e</i><i>r</i><i>t</i><i>y</i><i>u</i><i>i</i><i>o</i><i>p</i>
+          <i>a</i><i>s</i><i>d</i><i>f</i><i>g</i><i>h</i><i>j</i><i>k</i><i>l</i><i class="h3">;</i>
+          <i>z</i><i>x</i><i>c</i><i>v</i><i>b</i><i>n</i><i>m</i><i class="h2">,</i><i class="h2">.</i><i class="h3">'</i>
+        </div>
+      </div>
+    </aside>
+
+    <div class="zen" data-centre>
+      <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+      <div class="line" tabindex="0" data-line></div>
+      <div class="ghost">By shifting his camp and taking circuitous routes…</div>
+      <div class="hint" data-hint>click and type · enter to finish</div>
+      <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="half"></i><i></i><i></i></div>
+    </div>
+  </div>
+</div>
+<div class="controls">
+  <label>line width <input type="range" min="50" max="86" step="1" value="78" data-measure></label>
+  <span class="val" data-measure-val>78 ch</span>
+  <label>grace <input type="range" min="0" max="3000" step="100" value="900" data-delay-input></label>
+  <span class="val" data-delay-val>900 ms</span>
+  <span>· both also live in the left drawer, under Display</span>
+</div>
+<div class="notes">
+  <div><b>Measure as a setting</b>50 characters to 86, the upper end being as wide as the rails allow before the text would touch them. The default is 78, wider than the 70 it was. The ghosts above and below follow the same measure, so the block stays coherent.</div>
+  <div><b>What permanence costs</b>The rails are now always in view, which is two vertical surfaces Zen did not have. They are narrow and static, so they read as a frame rather than as content — but this is the honest trade for never having furniture appear mid-session.</div>
+</div>
+
+<h2><span class="num">A</span>Deep analysis as a place</h2>
+<p class="thesis">The rail's bottom item is a door: <code>FULL STATS ›</code> takes over the whole surface with the analysis page — tiles, confusions, error categories, the keyboard heatmap, the learning curve. You have left the typing screen and you know it; going back is one click. This is what the app does today, wired to the rail instead of a separate route.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — /stats</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-delay="900" data-deep="page">
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="now"></i><i></i><i></i></div>
+        <div class="divider"></div>
+        <div class="more">plan ›</div>
+      </div>
+      <div class="panel"><h4>Session · 20 min <span class="close">esc</span></h4>
+        <div class="step now"><i class="bullet">2</i><div><div class="t">The book</div><div class="s">lines 347–359</div></div></div>
+      </div>
+    </aside>
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf metric"><span class="k">wpm</span><span class="v" data-rail-wpm>—</span></div>
+        <div class="rf metric"><span class="k">acc</span><span class="v sm" data-rail-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf metric"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="divider"></div>
+        <div class="more" data-deep-open style="cursor:pointer">full<br>stats ›</div>
+      </div>
+      <div class="panel"><h4>Last line <span class="close">esc</span></h4>
+        <div class="metric"><div class="n" data-wpm>—</div><div class="l">words per minute</div></div>
+        <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+        <button class="btn ghost" data-deep-open>Open full stats</button>
+      </div>
+    </aside>
+    <div class="zen" data-centre>
+      <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+      <div class="line" tabindex="0" data-line></div>
+      <div class="hint" data-hint>click and type · enter to finish</div>
+    </div>
+
+    <div class="sheet">
+      <div class="sheet-head"><h3>Stats</h3><span style="font-size:12px;color:var(--tt-ink-secondary)">Art of War · 209 attempts</span><span class="back" data-deep-close>← back to typing</span></div>
+      <div class="tiles">
+        <div class="tile"><div class="n">209</div><div class="l">attempts</div></div>
+        <div class="tile"><div class="n">82m</div><div class="l">typing</div></div>
+        <div class="tile"><div class="n">95</div><div class="l">top wpm</div></div>
+        <div class="tile"><div class="n">67</div><div class="l">mean wpm</div></div>
+        <div class="tile"><div class="n">95%</div><div class="l">mean acc</div></div>
+        <div class="tile"><div class="n">3</div><div class="l">best streak</div></div>
+      </div>
+      <div class="cols">
+        <div class="blk">
+          <h5>Confusions · from every key pressed</h5>
+          <table class="mini">
+            <tr><td class="m">.</td><td class="m">typed ,</td><td class="r">3</td></tr>
+            <tr><td class="m">'</td><td class="m">typed ;</td><td class="r">2</td></tr>
+            <tr><td class="m">l</td><td class="m">typed (space)</td><td class="r">1</td></tr>
+          </table>
+          <h5 style="margin-top:14px">Problem words</h5>
+          <table class="mini">
+            <tr><td class="m">skillful</td><td class="r">ski lful</td></tr>
+            <tr><td class="m">Ch'ang</td><td class="r">Chaang</td></tr>
+          </table>
+        </div>
+        <div class="blk">
+          <h5>Error categories</h5>
+          <div class="catrow"><span class="c">quote</span><span class="bar"><i style="width:100%"></i></span><span class="v">5.0%</span></div>
+          <div class="catrow"><span class="c">punct</span><span class="bar"><i style="width:8%"></i></span><span class="v">0.4%</span></div>
+          <div class="catrow"><span class="c">lower</span><span class="bar"><i style="width:1%"></i></span><span class="v">0.0%</span></div>
+          <div class="catrow"><span class="c">upper</span><span class="bar"><i style="width:0"></i></span><span class="v">0.0%</span></div>
+          <h5 style="margin-top:14px">Speed over the book</h5>
+          <svg width="100%" height="64" viewBox="0 0 320 64" preserveAspectRatio="none">
+            <line x1="0" y1="56" x2="320" y2="56" stroke="var(--tt-line)"/>
+            <polyline fill="none" stroke="var(--tt-sub)" stroke-width="1"
+              points="0,44 20,40 40,46 60,36 80,42 100,32 120,38 140,28 160,34 180,26 200,31 220,22 240,28 260,20 280,25 300,18 320,22"/>
+            <polyline fill="none" stroke="var(--tt-accent)" stroke-width="1.8"
+              points="0,45 40,43 80,40 120,37 160,33 200,30 240,26 280,23 320,20"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="notes">
+  <div><b>Why it might win</b>All the room in the world, so nothing has to be cut. It is also what already exists, so it is the cheapest of the three by a wide margin.</div>
+  <div><b>What it costs</b>It is a departure. You stop typing, you go somewhere, you come back — which in practice means most sessions never go there at all, and the analysis stays a thing you know exists rather than a thing you use.</div>
+</div>
+
+<h2><span class="num">B</span>Deep analysis as a layer</h2>
+<p class="thesis">The wing expands twice. One click gives the drawer, as before; the drawer's own <code>go deeper</code> pushes it out to a full-height sheet covering most of the stage, with the typing line still visible at the edge. <kbd>Esc</kbd> steps back down one level at a time — sheet, drawer, closed. You never navigate away, so the analysis stays part of the session rather than an errand.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-delay="900" data-deep="layer">
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="now"></i><i></i><i></i></div>
+        <div class="divider"></div><div class="more">plan ›</div>
+      </div>
+      <div class="panel"><h4>Session · 20 min <span class="close">esc</span></h4>
+        <div class="step now"><i class="bullet">2</i><div><div class="t">The book</div><div class="s">lines 347–359</div></div></div>
+      </div>
+    </aside>
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf metric"><span class="k">wpm</span><span class="v" data-rail-wpm>—</span></div>
+        <div class="rf metric"><span class="k">acc</span><span class="v sm" data-rail-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf metric"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+        <div class="divider"></div><div class="more">last line ›</div>
+      </div>
+      <div class="panel">
+        <h4>Last line <span class="close">esc</span></h4>
+        <div class="metric"><div class="n" data-wpm>—</div><div class="l">words per minute</div></div>
+        <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+        <div class="metric"><div class="n" data-verdict style="font-size:14px">—</div><div class="l">against 99% · 60 wpm</div></div>
+        <button class="btn ghost" data-deep-open>Go deeper ››</button>
+      </div>
+    </aside>
+    <div class="zen" data-centre>
+      <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+      <div class="line" tabindex="0" data-line></div>
+      <div class="hint" data-hint>click and type · enter to finish</div>
+    </div>
+    <div class="sheet slide" style="left: 96px; border-left: 1px solid var(--tt-line); box-shadow: -10px 0 30px rgba(0,0,0,0.08);">
+      <div class="sheet-head"><h3>Your weak points</h3><span style="font-size:12px;color:var(--tt-ink-secondary)">from 209 attempts</span><span class="back" data-deep-close>esc · back to the line</span></div>
+      <div class="cols">
+        <div class="blk">
+          <h5>Confusions</h5>
+          <table class="mini">
+            <tr><td class="m">.</td><td class="m">typed ,</td><td class="r">3</td></tr>
+            <tr><td class="m">'</td><td class="m">typed ;</td><td class="r">2</td></tr>
+            <tr><td class="m">l</td><td class="m">typed (space)</td><td class="r">1</td></tr>
+          </table>
+          <h5 style="margin-top:14px">Error categories</h5>
+          <div class="catrow"><span class="c">quote</span><span class="bar"><i style="width:100%"></i></span><span class="v">5.0%</span></div>
+          <div class="catrow"><span class="c">punct</span><span class="bar"><i style="width:8%"></i></span><span class="v">0.4%</span></div>
+          <div class="catrow"><span class="c">lower</span><span class="bar"><i style="width:1%"></i></span><span class="v">0.0%</span></div>
+        </div>
+        <div class="blk">
+          <h5>What to do about it</h5>
+          <p style="font-size:12.5px;color:var(--tt-ink-secondary);margin:0 0 10px">Quotes cost you more than everything else combined. Two lines ahead are dense in them.</p>
+          <button class="btn">Drill quotes · 30s</button>
+          <button class="btn ghost">Jump to line 372</button>
+          <h5 style="margin-top:16px">Worst keys</h5>
+          <div class="keystrip">
+            <i>q</i><i>w</i><i class="h1">e</i><i>r</i><i>t</i><i>y</i><i>u</i><i>i</i><i>o</i><i>p</i>
+            <i>a</i><i>s</i><i>d</i><i>f</i><i>g</i><i>h</i><i>j</i><i>k</i><i>l</i><i class="h3">;</i>
+            <i>z</i><i>x</i><i>c</i><i>v</i><i>b</i><i>n</i><i>m</i><i class="h2">,</i><i class="h2">.</i><i class="h3">'</i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="notes">
+  <div><b>Why it might win</b>One continuous surface, three depths, one key to climb back down. The line stays visible at the left edge, so you never lose your place, and acting on a finding — drill this, jump there — puts you straight back to typing.</div>
+  <div><b>What it costs</b>A sheet that is not quite full width and not quite a panel can read as neither. And the deep view only gets about 80% of the stage, so the widest things — a learning curve over 444 lines, a full keyboard heatmap — are cramped compared with a real page.</div>
+</div>
+
+<h2><span class="num">C</span>Deep analysis as a moment</h2>
+<p class="thesis">No door on the rail at all. The analysis is the closing act of a session: you finish, and it comes to you — what moved today, what did not, and one thing to do about it next time. The rails carry only the live figures; anything historical waits for the review. The argument is that weak-point analysis is not something you consult mid-line, it is something you reflect on when you stop.</p>
+<div class="frame">
+  <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+  <div class="stage" data-stage data-delay="900" data-deep="moment">
+    <aside class="wing left" data-wing="left">
+      <div class="rail">
+        <div class="rf"><span class="k">step</span><span class="v sm">2/4</span></div>
+        <div class="ticks"><i class="done"></i><i class="now"></i><i></i><i></i></div>
+        <div class="divider"></div>
+        <div class="more" data-deep-open style="cursor:pointer">end<br>session ›</div>
+      </div>
+      <div class="panel"><h4>Session · 20 min <span class="close">esc</span></h4>
+        <div class="step now"><i class="bullet">2</i><div><div class="t">The book</div><div class="s">lines 347–359</div></div></div>
+        <button class="btn" data-deep-open>Finish and review</button>
+      </div>
+    </aside>
+    <aside class="wing right" data-wing="right">
+      <div class="rail">
+        <div class="rf metric"><span class="k">wpm</span><span class="v" data-rail-wpm>—</span></div>
+        <div class="rf metric"><span class="k">acc</span><span class="v sm" data-rail-acc>—</span></div>
+        <div class="divider"></div>
+        <div class="rf metric"><span class="k">worst</span></div>
+        <div class="heat"><i class="h3">'</i><i class="h2">;</i><i class="h1">e</i></div>
+      </div>
+      <div class="panel"><h4>Last line <span class="close">esc</span></h4>
+        <div class="metric"><div class="n" data-wpm>—</div><div class="l">words per minute</div></div>
+        <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+      </div>
+    </aside>
+    <div class="zen" data-centre>
+      <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+      <div class="line" tabindex="0" data-line></div>
+      <div class="hint" data-hint>click and type · enter to finish</div>
+    </div>
+    <div class="review">
+      <div class="sub">session 14 · 18 minutes · 12 lines</div>
+      <div class="big">71<span style="font-size:20px;color:var(--tt-ink-secondary)"> wpm</span></div>
+      <div class="sub">99.2% accuracy · 10 passed, 2 retried</div>
+      <div class="moved">
+        <div><div class="n">+4</div><div class="l">wpm vs last</div></div>
+        <div><div class="n">+0.3%</div><div class="l">accuracy</div></div>
+        <div><div class="n down">5.0%</div><div class="l">quotes, unchanged</div></div>
+        <div><div class="n">3</div><div class="l">day streak</div></div>
+      </div>
+      <p style="font-size:13px;color:var(--tt-ink-secondary);max-width:52ch;text-align:center;margin:10px 0 0">
+        Quotes are still your worst category and did not move today — you met them four times. Tomorrow starts with a quote drill unless you say otherwise.</p>
+      <div class="acts">
+        <button class="btn">Start tomorrow's plan</button>
+        <button class="btn ghost" data-deep-close>Back to typing</button>
+        <button class="btn ghost">See everything</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="notes">
+  <div><b>Why it might win</b>It is the only one where the analysis is guaranteed to be seen, because it arrives rather than waiting to be visited. It also matches when the information is actually useful: between sessions, when you can act on it.</div>
+  <div><b>What it costs</b>You cannot answer "why did that line fail?" in the moment — the detail is not reachable until you stop. It almost certainly needs option A behind it anyway, as the "see everything" escape hatch.</div>
+</div>
+
+<p class="footer">Written 2026-09-20. Working prototypes: typing, the diff, the grace timer, the drawer and every transition here are real; the analysis content is the real figures from the store, held as fixed markup. See <code>docs/UI_Refresh_Notes.md</code>.</p>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TARGET = "37. By altering his arrangements and changing his plans, he keeps the enemy without definite knowledge.";
+
+  function Proto(stage) {
+    var self = this;
+    this.stage = stage;
+    this.line = stage.querySelector("[data-line]");
+    this.hint = stage.querySelector("[data-hint]");
+    this.stateEl = stage.closest(".frame").querySelector("[data-state]");
+    this.delay = parseInt(stage.dataset.delay, 10);
+    this.deep = stage.dataset.deep;
+    this.typed = ""; this.times = []; this.start = 0; this.finished = false;
+    this.timer = null; this.open = null; this.deepOpen = false;
+
+    this.render();
+    this.line.addEventListener("keydown", function (e) { self.key(e); });
+
+    stage.querySelectorAll("[data-wing]").forEach(function (w) {
+      w.addEventListener("click", function (e) {
+        if (e.target.closest("[data-deep-open]") || e.target.closest("input")) return;
+        var side = w.dataset.wing;
+        if (self.open === side) self.close(); else self.openWing(side);
+      });
+    });
+    stage.querySelectorAll("[data-deep-open]").forEach(function (b) {
+      b.addEventListener("click", function (e) { e.stopPropagation(); self.openDeep(); });
+    });
+    stage.querySelectorAll("[data-deep-close]").forEach(function (b) {
+      b.addEventListener("click", function (e) { e.stopPropagation(); self.closeDeep(); });
+    });
+    var centre = stage.querySelector("[data-centre]");
+    if (centre) centre.addEventListener("click", function () {
+      if (self.deepOpen) return;
+      if (self.open) self.close();
+      self.line.focus();
+    });
+
+    // The measure and the grace period are settings; both appear in the left
+    // drawer and, for convenience while judging this mockup, under the frame.
+    var section = stage.closest(".frame").parentNode;
+    section.querySelectorAll("[data-measure]").forEach(function (input) {
+      input.addEventListener("input", function () {
+        stage.style.setProperty("--measure", input.value + "ch");
+        section.querySelectorAll("[data-measure]").forEach(function (o) { o.value = input.value; });
+        section.querySelectorAll("[data-measure-val]").forEach(function (o) {
+          o.textContent = o.classList.contains("val") ? input.value + " ch" : input.value;
+        });
+      });
+    });
+    section.querySelectorAll("[data-delay-input]").forEach(function (input) {
+      input.addEventListener("input", function () {
+        self.delay = parseInt(input.value, 10);
+        section.querySelectorAll("[data-delay-input]").forEach(function (o) { o.value = input.value; });
+        section.querySelectorAll("[data-delay-val]").forEach(function (o) {
+          o.textContent = o.classList.contains("val") ? input.value + " ms" : input.value;
+        });
+        self.arm();
+      });
+    });
+  }
+
+  Proto.prototype.setState = function (s) {
+    this.stateEl.textContent = s;
+    this.stateEl.className = "state" + (s === "armed" ? " armed" : /shown|open|deep/.test(s) ? " shown" : "");
+  };
+
+  Proto.prototype.openWing = function (side) {
+    this.stage.classList.add("open");
+    this.stage.classList.toggle("open-left", side === "left");
+    this.stage.classList.toggle("open-right", side === "right");
+    this.open = side;
+    this.setState("open " + side);
+  };
+  Proto.prototype.close = function () {
+    this.stage.classList.remove("open", "open-left", "open-right");
+    this.open = null;
+    this.setState(this.stage.classList.contains("shown") ? "shown" : "idle");
+  };
+  Proto.prototype.openDeep = function () {
+    if (this.deep === "none") return;
+    this.deepOpen = true;
+    this.stage.classList.add(this.deep === "moment" ? "review-on" : "deep");
+    this.stage.classList.remove("open-left", "open-right");
+    this.setState(this.deep === "moment" ? "review" : "deep");
+  };
+  Proto.prototype.closeDeep = function () {
+    this.deepOpen = false;
+    this.stage.classList.remove("deep", "review-on", "open");
+    this.open = null;
+    this.setState("shown");
+  };
+
+  // The grace period now governs only whether the figures appear. The rails are
+  // permanent, so nothing moves when it fires -- the numbers simply fade up.
+  Proto.prototype.arm = function () {
+    var self = this;
+    window.clearTimeout(this.timer);
+    if (!this.typed.length) { this.setState("idle"); return; }
+    this.setState("armed");
+    this.timer = window.setTimeout(function () {
+      self.stage.classList.add("shown");
+      self.fill();
+      self.setState("shown");
+    }, this.delay);
+  };
+  Proto.prototype.hideFigures = function () {
+    this.stage.classList.remove("shown");
+  };
+
+  Proto.prototype.score = function () {
+    var correct = 0, i;
+    for (i = 0; i < this.typed.length; i++) if (this.typed[i] === TARGET[i]) correct++;
+    var seconds = this.times.length > 1 ? (this.times[this.times.length - 1] - this.times[0]) / 1000 : 0;
+    // Same guard the app carries: below a quarter-second this is not typing.
+    var wpm = seconds >= 0.25 ? (correct * 60) / (5 * seconds) : 0;
+    var stalls = 0;
+    for (i = 1; i < this.times.length; i++) if (this.times[i] - this.times[i - 1] > 500) stalls++;
+    var acc = this.typed.length ? correct / this.typed.length : 0;
+    return { wpm: wpm, acc: acc, stalls: stalls, passed: acc >= 0.99 && wpm >= 60 };
+  };
+
+  Proto.prototype.fill = function () {
+    var s = this.score(), stage = this.stage;
+    var put = function (sel, text, cls) {
+      stage.querySelectorAll(sel).forEach(function (el) {
+        el.textContent = text;
+        if (cls !== undefined) el.className = el.className.replace(/\s*(good|bad)\b/g, "") + (cls ? " " + cls : "");
+      });
+    };
+    var accCls = s.acc >= 0.99 ? "good" : "bad";
+    put("[data-rail-wpm]", s.wpm ? s.wpm.toFixed(0) : "—");
+    put("[data-rail-acc]", (s.acc * 100).toFixed(0) + "%", accCls);
+    put("[data-wpm]", s.wpm ? s.wpm.toFixed(0) : "—");
+    put("[data-acc]", (s.acc * 100).toFixed(0) + "%", accCls);
+    put("[data-stalls]", String(s.stalls));
+    put("[data-verdict]", s.passed ? "passed" : (s.acc < 0.99 ? "accuracy short" : "too slow"), s.passed ? "good" : "bad");
+  };
+
+  function esc(t) { return t.replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; }); }
+  Proto.prototype.render = function () {
+    var html = "", i;
+    for (i = 0; i < this.typed.length; i++) {
+      html += '<span class="' + (this.typed[i] === TARGET[i] ? "ok" : "bad") + '">' + esc(this.typed[i]) + "</span>";
+    }
+    if (!this.finished) html += '<span class="caret"></span>';
+    html += '<span class="pending">' + esc(TARGET.slice(this.typed.length)) + "</span>";
+    this.line.innerHTML = html;
+    this.line.classList.toggle("done", this.finished);
+    if (this.hint) {
+      this.hint.textContent = this.typed.length
+        ? (this.finished ? "line finished · stop and wait, or type on" : "enter to finish · esc to reset")
+        : "click and type · enter to finish";
+    }
+  };
+
+  Proto.prototype.key = function (e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      // Esc climbs down one level at a time: deep view, drawer, then the line.
+      if (this.deepOpen) { this.closeDeep(); return; }
+      if (this.open) { this.close(); return; }
+      window.clearTimeout(this.timer);
+      this.typed = ""; this.times = []; this.finished = false;
+      this.hideFigures(); this.setState("idle"); this.render();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      var side = e.key === "ArrowLeft" ? "left" : "right";
+      if (this.open === side) this.close(); else this.openWing(side);
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!this.typed.length) return;
+      this.finished = true; this.render(); this.arm();
+      return;
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      this.typed = this.typed.slice(0, -1); this.times.pop();
+      this.hideFigures(); this.render(); this.arm();
+      return;
+    }
+    if (e.key.length !== 1) return;
+    e.preventDefault();
+    if (this.finished) { this.typed = ""; this.times = []; this.finished = false; }
+    if (!this.typed.length) this.start = Date.now();
+    this.typed += e.key;
+    this.times.push(Date.now() - this.start);
+    this.hideFigures();          // figures retract the instant typing resumes
+    this.render();
+    this.arm();
+  };
+
+  document.querySelectorAll("[data-stage]").forEach(function (s) { new Proto(s); });
+})();
+</script>
+</body>
+</html>

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from itertools import zip_longest
 
 from . import history
@@ -901,7 +901,269 @@ def overall_stats(attempts: list, today: date | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 4. ENTRY POINT
+# 4. THE REVIEW SCREEN (session deltas and the one recommended next action)
+# ---------------------------------------------------------------------------
+
+#: The gap, in minutes, that separates one session from the next. Must agree
+#: with ``web.server.SESSION_GAP`` (currently ``timedelta(minutes=30)``) --
+#: kept as an independent constant rather than an import because server.py
+#: imports this module, not the other way around, and analysis.py must stay
+#: free of any web-layer dependency. If the two ever diverge that is a bug
+#: to fix by editing both, not a reason to import across the boundary.
+SESSION_GAP_MINUTES = 30
+
+
+def _split_into_sessions(attempts: list, gap_minutes: float = SESSION_GAP_MINUTES) -> list:
+    """Split oldest-first ``(key, record)`` pairs into runs (sessions).
+
+    A new session starts wherever the gap between two consecutive
+    ``EventTime`` values exceeds ``gap_minutes``, or wherever either time
+    cannot be parsed at all -- the same rule
+    ``web.server._current_session_attempts`` uses for finding the single
+    most-recent session, generalised here to split the whole history rather
+    than just look backward from the end.
+    """
+    if not attempts:
+        return []
+    sessions = [[attempts[0]]]
+    threshold = timedelta(minutes=gap_minutes)
+    for i in range(1, len(attempts)):
+        prev_t = _parse_event_time(attempts[i - 1][1].get("EventTime"))
+        cur_t = _parse_event_time(attempts[i][1].get("EventTime"))
+        if prev_t is None or cur_t is None or (cur_t - prev_t) > threshold:
+            sessions.append([])
+        sessions[-1].append(attempts[i])
+    return sessions
+
+
+def _delta_field(current, previous) -> dict:
+    """One {"current", "previous", "delta", "direction"} entry for session_deltas.
+
+    ``direction`` is "up"/"down"/"same" when both figures are present, and
+    None when either is missing -- a missing previous figure (first-ever
+    session) must never be silently treated as zero, which would show as a
+    dishonestly huge "improvement".
+    """
+    if current is None or previous is None:
+        return {"current": current, "previous": previous, "delta": None, "direction": None}
+    delta = _round(current - previous, 4)
+    direction = "up" if current > previous else "down" if current < previous else "same"
+    return {"current": current, "previous": previous, "delta": delta, "direction": direction}
+
+
+def _worst_category_delta(cur_cats: dict, prev_cats: dict | None) -> dict:
+    """Compare the current session's single worst error category to its own
+    rate last session (not to whatever was worst last session, which might be
+    a different category entirely -- the brief asks whether *the* worst
+    category improved, which only makes sense read against its own history).
+    """
+    # Only a category the typist actually got wrong can be "the worst" one.
+    # Taking the first row regardless produced "lower is your worst category
+    # at 0.0%" on real data, because within a single session every rate ties
+    # at zero and the tie-break then picks alphabetically -- a confident
+    # statement about nothing. With no errors at all we decline to name one.
+    cur_rows = [
+        r
+        for r in cur_cats.get("categories", [])
+        if r.get("mistyped", 0) > 0 and r.get("error_rate", 0) > 0
+    ]
+    cur_rows.sort(key=lambda r: (-r["error_rate"], r["category"]))
+    worst = cur_rows[0] if cur_rows else None
+    if worst is None:
+        return {"category": None, "current_rate": None, "previous_rate": None, "direction": None}
+    category = worst["category"]
+    current_rate = worst["error_rate"]
+    previous_rate = None
+    if prev_cats:
+        prev_by_cat = {r["category"]: r["error_rate"] for r in prev_cats.get("categories", [])}
+        previous_rate = prev_by_cat.get(category)
+    if previous_rate is None:
+        direction = None
+    elif current_rate < previous_rate:
+        direction = "improved"
+    elif current_rate > previous_rate:
+        direction = "worse"
+    else:
+        direction = "unchanged"
+    return {
+        "category": category,
+        "current_rate": current_rate,
+        "previous_rate": previous_rate,
+        "direction": direction,
+    }
+
+
+def _empty_session_deltas() -> dict:
+    empty = {"current": None, "previous": None, "delta": None, "direction": None}
+    return {
+        "has_previous": False,
+        "wpm": dict(empty),
+        "accuracy": dict(empty),
+        "lines_completed": dict(empty),
+        "time_typing_s": dict(empty),
+        "worst_category": {"category": None, "current_rate": None, "previous_rate": None, "direction": None},
+    }
+
+
+def session_deltas(attempts: list) -> dict:
+    """What moved between the session just finished and the one before it.
+
+    ``attempts`` is the whole history relevant to the comparison -- every
+    attempt of the session just finished, plus the history before it -- oldest
+    first, exactly as ``history.iter_attempts()`` returns it. This function
+    does its own session splitting (``_split_into_sessions``, using
+    ``SESSION_GAP_MINUTES`` -- see that constant's docstring for why it is
+    not imported from ``web.server``): the last session found is "this
+    session", the one immediately before it is "last session", and anything
+    older is not used.
+
+    Returns a dict with ``has_previous`` plus five comparisons:
+    ``wpm`` and ``accuracy`` (session means), ``lines_completed`` and
+    ``time_typing_s`` (session totals) as ``{"current", "previous", "delta",
+    "direction"}``, and ``worst_category`` (see ``_worst_category_delta``)
+    for whether the session's single worst error category improved, stayed
+    the same or got worse against its own rate last session.
+
+    Never raises. An empty ``attempts`` list, or a history that is all one
+    session so far (no previous session to compare against), both return a
+    fully-shaped result with ``has_previous: False`` and every comparison's
+    "previous"/"delta"/"direction" as None -- "not enough data yet" is a
+    normal answer here, not an error.
+    """
+    sessions = _split_into_sessions(attempts)
+    if not sessions:
+        return _empty_session_deltas()
+
+    current = sessions[-1]
+    previous = sessions[-2] if len(sessions) >= 2 else []
+
+    cur_summary = session_summary(current)
+    cur_cats = error_categories(current)
+    if not previous:
+        return {
+            "has_previous": False,
+            "wpm": _delta_field(cur_summary.get("mean_wpm"), None),
+            "accuracy": _delta_field(cur_summary.get("mean_accuracy"), None),
+            "lines_completed": _delta_field(cur_summary.get("lines_completed"), None),
+            "time_typing_s": _delta_field(cur_summary.get("duration_s"), None),
+            "worst_category": _worst_category_delta(cur_cats, None),
+        }
+
+    prev_summary = session_summary(previous)
+    prev_cats = error_categories(previous)
+    return {
+        "has_previous": True,
+        "wpm": _delta_field(cur_summary.get("mean_wpm"), prev_summary.get("mean_wpm")),
+        "accuracy": _delta_field(cur_summary.get("mean_accuracy"), prev_summary.get("mean_accuracy")),
+        "lines_completed": _delta_field(
+            cur_summary.get("lines_completed"), prev_summary.get("lines_completed")
+        ),
+        "time_typing_s": _delta_field(cur_summary.get("duration_s"), prev_summary.get("duration_s")),
+        "worst_category": _worst_category_delta(cur_cats, prev_cats),
+    }
+
+
+def next_action(report: dict) -> dict:
+    """One recommended next action, derived from the weak-point analysis.
+
+    ``report`` is shaped like ``full_report()`` (or any dict carrying at
+    least ``data_coverage`` and ``weak_points`` in that shape). Preference
+    order, each degrading to the next when it has nothing to offer:
+
+    1. The worst error category (``weak_points.error_categories``) -- the
+       coarsest, most reliable signal, and the one the review screen's own
+       example leads with ("quotes are your worst category").
+    2. The worst individual character, preferring the keystroke-derived view
+       (``keystroke_character_errors``) over the submitted-text one
+       (``character_error_rates``) for the same reason ``drills.py`` does --
+       under a strict accuracy floor the submitted text is almost always
+       perfect, so real mistakes mostly only exist in the keystrokes. Noise
+       floor of 3 sightings, same as ``drills._MIN_CHAR_SAMPLES``, and
+       whitespace is excluded for the same alignment-artefact reason.
+    3. The worst confusion pair, same keystroke-preferred fallback, floored
+       at 2 occurrences.
+
+    Returns ``{"message", "kind", "target", "detail"}``: ``kind`` is one of
+    "category"/"char"/"confusion"/None, ``target`` a short JSON-safe string
+    (or None), ``detail`` the underlying row this was built from (or None).
+    A store with no attempts at all -- or one with attempts but no weak point
+    clearing any noise floor -- returns a gentle message with ``kind: None``
+    rather than raising or returning nothing.
+    """
+    total_attempts = report.get("data_coverage", {}).get("total_attempts", 0)
+    if not total_attempts:
+        return {
+            "message": "Keep typing — not enough data yet.",
+            "kind": None,
+            "target": None,
+            "detail": None,
+        }
+
+    weak_points = report.get("weak_points", {})
+
+    cat_rows = [
+        r for r in weak_points.get("error_categories", {}).get("categories", [])
+        if r.get("mistyped", 0) > 0
+    ]
+    if cat_rows:
+        worst = cat_rows[0]
+        return {
+            "message": (
+                f"{worst['category'].capitalize()} is your worst error category at "
+                f"{worst['error_rate'] * 100:.0f}% — start next time with a "
+                f"{worst['category']} drill."
+            ),
+            "kind": "category",
+            "target": worst["category"],
+            "detail": worst,
+        }
+
+    char_rows = weak_points.get("keystroke_character_errors", {}).get("characters", []) or (
+        weak_points.get("character_error_rates", {}).get("characters", [])
+    )
+    char_rows = [
+        r for r in char_rows
+        if r.get("seen", 0) >= 3 and r.get("mistyped", 0) > 0
+        and r.get("char") not in (" ", "\t", "\n")
+    ]
+    if char_rows:
+        worst = char_rows[0]
+        return {
+            "message": (
+                f"'{worst['char']}' is your worst key at "
+                f"{worst['error_rate'] * 100:.0f}% -- a short drill on it is next."
+            ),
+            "kind": "char",
+            "target": worst["char"],
+            "detail": worst,
+        }
+
+    confusion_rows = weak_points.get("keystroke_confusions", {}).get("pairs", []) or (
+        weak_points.get("confusion_pairs", {}).get("pairs", [])
+    )
+    confusion_rows = [r for r in confusion_rows if r.get("count", 0) >= 2]
+    if confusion_rows:
+        worst = confusion_rows[0]
+        return {
+            "message": (
+                f"You type '{worst['typed']}' when you mean '{worst['intended']}' -- "
+                f"worth a drill."
+            ),
+            "kind": "confusion",
+            "target": f"{worst['intended']}>{worst['typed']}",
+            "detail": worst,
+        }
+
+    return {
+        "message": "No clear weak point yet — keep typing to build up data.",
+        "kind": None,
+        "target": None,
+        "detail": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. ENTRY POINT
 # ---------------------------------------------------------------------------
 
 

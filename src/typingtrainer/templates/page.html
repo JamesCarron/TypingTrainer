@@ -8,9 +8,14 @@
 
   Written 2026-09-19 for stage 6 of the TypingTrainer refactor
   (docs/Refactor_Plan.md). Rewritten 2026-09-19 for the Monkeytype-style
-  typing surface (docs/UI_Refresh_Notes.md, Proposal A): no card, inverted
-  colour convention, a real caret, chrome that fades while typing, a dimmed
-  previous line, live stats, and stop-on-error.
+  typing surface (docs/UI_Refresh_Notes.md, Proposal A).
+
+  Rewritten again 2026-09-20 for "Wings v2"
+  (docs/mockups/UI_Mockup_Wings_v2.html): permanent left/right rails that
+  expand in place into drawers, the line's width driven by the `measure_ch`
+  setting, and deep analysis moved out of this page entirely into a
+  full-stage review screen shown when a session finishes (the only door out
+  to /stats). See AGENTS.md and docs/Contracts.md.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -23,23 +28,86 @@
   </style>
 </head>
 <body>
-  <div class="page">
-    <header class="app-header chrome-fade">
-      <h1>TypingTrainer</h1>
-      <span id="text-name">""</span>
-    </header>
-
-    <div class="meta-row chrome-fade">
-      <span id="position-label">0/0 (0.0%)</span>
-      <div id="criteria-display"></div>
-    </div>
+  <div class="stage" id="stage">
 
     <div id="error-bar" hidden></div>
 
-    <div class="stage">
-      <div id="live-stats" class="live-stats" hidden></div>
+    <!-- Left wing: where you are, the text, and every setting. -->
+    <aside class="wing wing-left" id="wing-left" data-wing="left">
+      <div class="rail" id="rail-left-view">
+        <div class="rf"><span class="k">step</span><span class="v sm" id="rail-step">&mdash;</span></div>
+        <div class="ticks" id="rail-ticks"></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">line</span><span class="v sm" id="rail-line">&mdash;</span></div>
+        <div class="rf"><span class="k">of</span><span class="v sm" id="rail-total">&mdash;</span></div>
+        <div class="divider"></div>
+        <div class="more">plan &amp;<br />settings &rsaquo;</div>
+      </div>
+      <div class="panel" id="panel-left">
+        <h4>Session <span class="esc-hint">esc</span></h4>
+        <div class="panel-line" id="panel-text-name">&mdash;</div>
+        <div class="panel-line clickable" id="panel-position" title="Click to jump to a line">&mdash;</div>
+        <div class="panel-line" id="panel-last-result"></div>
 
-      <div id="previous-line" class="previous-line"></div>
+        <h5>Text</h5>
+        <select id="text-picker" aria-label="Select text"></select>
+        <button id="add-text-btn" type="button" class="btn ghost">Add text&hellip;</button>
+
+        <h5>Navigate</h5>
+        <button id="prev-btn" type="button" class="btn ghost">&larr; Prev</button>
+        <button id="next-btn" type="button" class="btn ghost">Next &rarr;</button>
+
+        <h5>Display</h5>
+        <div class="field">
+          <span>line width</span>
+          <span class="field-control">
+            <input type="range" id="measure-input" min="50" max="86" step="1" data-setting="measure_ch" />
+            <span class="num" id="measure-val">78</span>
+          </span>
+        </div>
+        <label class="field">
+          <span>stop on error</span>
+          <span class="field-control"><input type="checkbox" data-setting="stop_on_error" /></span>
+        </label>
+        <label class="field">
+          <span>flash on mistake</span>
+          <span class="field-control"><input type="checkbox" data-setting="flash_on_mistake" /></span>
+        </label>
+        <label class="field">
+          <span>show criteria</span>
+          <span class="field-control"><input type="checkbox" data-setting="show_criteria" /></span>
+        </label>
+        <label class="field">
+          <span>live stats</span>
+          <span class="field-control"><input type="checkbox" data-setting="live_stats" /></span>
+        </label>
+        <label class="field">
+          <span>require accuracy</span>
+          <span class="field-control"><input type="checkbox" data-setting="require_accuracy" /></span>
+        </label>
+        <label class="field">
+          <span>min accuracy (%)</span>
+          <span class="field-control"><input type="number" min="0" max="100" step="1" data-setting="min_accuracy" /></span>
+        </label>
+        <label class="field">
+          <span>require wpm</span>
+          <span class="field-control"><input type="checkbox" data-setting="require_wpm" /></span>
+        </label>
+        <label class="field">
+          <span>min wpm</span>
+          <span class="field-control"><input type="number" min="0" step="1" data-setting="min_wpm" /></span>
+        </label>
+
+        <h5>Data</h5>
+        <button id="reset-history-btn" type="button" class="btn ghost">Reset history</button>
+
+        <button id="finish-session-btn" type="button" class="btn block">Finish session</button>
+      </div>
+    </aside>
+
+    <!-- Centre: the typing surface itself. -->
+    <div class="centre" id="centre">
+      <div id="previous-line" class="ghost"></div>
 
       <div class="current-line-wrap">
         <div id="typing-area" tabindex="0" aria-label="Typing area">
@@ -48,79 +116,55 @@
         <div id="caret" class="caret" aria-hidden="true"></div>
       </div>
 
-      <div id="upcoming-lines"></div>
+      <div id="upcoming-lines" class="ghost"></div>
+
+      <div id="capslock-warning" hidden>&#9888; CAPS LOCK ON</div>
+      <div id="instructions">Press Enter to start.</div>
     </div>
 
-    <div id="capslock-warning" hidden>&#9888; CAPS LOCK ON</div>
-    <div id="instructions" class="chrome-fade">Press Enter to start.</div>
+    <!-- Right wing: the live figures, and the last line's detail. -->
+    <aside class="wing wing-right" id="wing-right" data-wing="right">
+      <div class="rail" id="rail-right-view">
+        <div class="rf metric"><span class="k">wpm</span><span class="v" id="rail-wpm">&mdash;</span></div>
+        <div class="rf metric"><span class="k">acc</span><span class="v sm" id="rail-acc">&mdash;</span></div>
+        <div class="divider"></div>
+        <div class="rf"><span class="k">worst</span></div>
+        <div class="heat" id="rail-worst"></div>
+        <div class="divider"></div>
+        <div class="more">last<br />line &rsaquo;</div>
+      </div>
+      <div class="panel" id="panel-right">
+        <h4>Last line <span class="esc-hint">esc</span></h4>
+        <div class="metric"><div class="n" id="detail-wpm">&mdash;</div><div class="l">words per minute</div></div>
+        <div class="metric"><div class="n" id="detail-acc">&mdash;</div><div class="l">accuracy</div></div>
+        <div class="metric"><div class="n" id="detail-verdict" style="font-size:14px">&mdash;</div><div class="l" id="detail-criteria-label">against criteria</div></div>
+        <div class="metric"><div class="n" id="detail-stalls" style="font-size:18px">&mdash;</div><div class="l">stalls over 500&nbsp;ms</div></div>
+        <h5>Worst keys</h5>
+        <div class="keystrip" id="keystrip"></div>
+      </div>
+    </aside>
 
-    <div class="controls-row chrome-fade">
-      <button id="prev-btn" type="button">Prev</button>
-      <button id="next-btn" type="button">Next</button>
-      <select id="text-picker" aria-label="Select text"></select>
-      <button id="add-text-btn" type="button" class="secondary">Add text&hellip;</button>
-      <button id="reset-history-btn" type="button" class="secondary">Reset history</button>
-      <button id="settings-btn" type="button" class="secondary">Settings</button>
-      <button id="finish-session-btn" type="button" class="secondary">Finish session</button>
-    </div>
-
-    <div id="settings-panel" hidden>
-      <div class="settings-grid">
-        <label>
-          <input type="checkbox" data-setting="require_accuracy" />
-          Require accuracy
-        </label>
-        <label>
-          Min accuracy (%)
-          <input type="number" data-setting="min_accuracy" min="0" max="100" step="1" />
-        </label>
-        <label>
-          <input type="checkbox" data-setting="require_wpm" />
-          Require WPM
-        </label>
-        <label>
-          Min WPM
-          <input type="number" data-setting="min_wpm" min="0" step="1" />
-        </label>
-        <label>
-          <input type="checkbox" data-setting="show_criteria" />
-          Show criteria
-        </label>
-        <label>
-          <input type="checkbox" data-setting="flash_on_mistake" />
-          Flash on mistake
-        </label>
-        <label>
-          <input type="checkbox" data-setting="stop_on_error" />
-          Stop on error
-        </label>
-        <label>
-          <input type="checkbox" data-setting="live_stats" />
-          Live stats
-        </label>
+    <!--
+      Deep analysis as a moment (docs/UI_Refresh_Notes.md, Wings v2, option C):
+      the closing act of a session, not a place reachable mid-line. Shown by
+      "Finish session" and by Esc while READY. Data comes from GET
+      /api/review; every field is optional and renders as a dash rather than
+      throwing, since that endpoint is still being built alongside this page.
+      "See everything" is the only door out to /stats.
+    -->
+    <div class="review" id="review" hidden>
+      <div class="sub" id="review-session">&mdash;</div>
+      <div class="big"><span id="review-wpm">&mdash;</span><span class="unit"> wpm</span></div>
+      <div class="sub" id="review-accuracy-line">&mdash;</div>
+      <div class="moved" id="review-moved"></div>
+      <p class="recommendation" id="review-recommendation"></p>
+      <div class="acts">
+        <button id="review-start-btn" type="button" class="btn">Start next session</button>
+        <button id="review-back-btn" type="button" class="btn ghost">Back to typing</button>
+        <a id="review-stats-link" class="btn ghost" href="/stats" target="_blank" rel="noopener">See everything</a>
       </div>
     </div>
 
-    <footer class="app-footer chrome-fade">
-      Enter: start / submit line &middot; Esc: abandon line (or, at READY, finish the session)
-      &middot; Ctrl+Backspace: delete last word &middot; Backspace: delete a character
-    </footer>
-  </div>
-
-  <!--
-    Session summary -- Monkeytype's results screen moved to the session
-    cadence (docs/UI_Refresh_Notes.md, decision 4). Shown by "Finish session"
-    or by Esc while READY; never after a single line. Dismissing it returns
-    to the typing screen unchanged -- it reads /api/session_summary but
-    submits nothing.
-  -->
-  <div id="session-summary-overlay" class="overlay" hidden>
-    <div id="session-summary" class="session-summary" role="dialog" aria-label="Session summary">
-      <button id="session-summary-close" type="button" class="overlay-close" aria-label="Close">&times;</button>
-      <h2>Session summary</h2>
-      <div id="session-summary-body">Loading&hellip;</div>
-      <p class="session-summary-link"><a id="session-summary-stats-link" href="/stats" target="_blank" rel="noopener">Open full stats &rarr;</a></p>
-    </div>
   </div>
 
   <script>

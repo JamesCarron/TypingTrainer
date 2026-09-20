@@ -631,3 +631,224 @@ def test_keystroke_character_errors_empty():
         "characters": [],
         "characters_seen": 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# session_deltas -- the review screen's "what moved" (added 2026-09-20,
+# Wings v2 UI refresh, option C: docs/mockups/UI_Mockup_Wings_v2.html)
+# ---------------------------------------------------------------------------
+
+
+def test_session_deltas_empty_history():
+    result = analysis.session_deltas([])
+    assert result["has_previous"] is False
+    empty = {"current": None, "previous": None, "delta": None, "direction": None}
+    assert result["wpm"] == empty
+    assert result["accuracy"] == empty
+    assert result["lines_completed"] == empty
+    assert result["time_typing_s"] == empty
+    assert result["worst_category"] == {
+        "category": None,
+        "current_rate": None,
+        "previous_rate": None,
+        "direction": None,
+    }
+
+
+def test_session_deltas_first_ever_session_has_no_previous():
+    """Two attempts five minutes apart -- one session, nothing before it."""
+    attempts = [
+        A("k1", EventTime="20-09-2026 09:00:00", Answer="cat", user_input="cat",
+          Wpm=40.0, Accuracy=1.0, Duration=3.0, Passed=True),
+        A("k2", EventTime="20-09-2026 09:05:00", Answer="cat", user_input="cat",
+          Wpm=60.0, Accuracy=1.0, Duration=3.0, Passed=True),
+    ]
+    result = analysis.session_deltas(attempts)
+    assert result["has_previous"] is False
+    assert result["wpm"]["current"] == pytest.approx(50.0)  # (40+60)/2
+    assert result["wpm"]["previous"] is None
+    assert result["wpm"]["delta"] is None
+    assert result["wpm"]["direction"] is None
+    assert result["lines_completed"]["current"] == 2
+    assert result["worst_category"]["previous_rate"] is None
+    assert result["worst_category"]["direction"] is None
+
+
+def test_session_deltas_two_sessions_hand_computed():
+    """A gap of 60 minutes (over SESSION_GAP_MINUTES=30) splits the history
+    into two sessions; every figure here is computed by hand in the comment."""
+    attempts = [
+        A("k1", EventTime="20-09-2026 09:00:00", Answer="cat", user_input="cat",
+          Wpm=40.0, Accuracy=0.9, Duration=3.0, Passed=True),
+        A("k2", EventTime="20-09-2026 09:05:00", Answer="cat", user_input="cat",
+          Wpm=50.0, Accuracy=1.0, Duration=4.0, Passed=True),
+        # 60 minutes after the previous attempt: a new session.
+        A("k3", EventTime="20-09-2026 10:05:00", Answer="cat", user_input="cat",
+          Wpm=60.0, Accuracy=1.0, Duration=2.0, Passed=True),
+        A("k4", EventTime="20-09-2026 10:10:00", Answer="cat", user_input="cat",
+          Wpm=70.0, Accuracy=1.0, Duration=2.0, Passed=True),
+    ]
+    result = analysis.session_deltas(attempts)
+    assert result["has_previous"] is True
+
+    # current mean wpm (60+70)/2=65, previous (40+50)/2=45
+    assert result["wpm"]["current"] == pytest.approx(65.0)
+    assert result["wpm"]["previous"] == pytest.approx(45.0)
+    assert result["wpm"]["delta"] == pytest.approx(20.0)
+    assert result["wpm"]["direction"] == "up"
+
+    # current mean accuracy 1.0, previous (0.9+1.0)/2=0.95
+    assert result["accuracy"]["current"] == pytest.approx(1.0)
+    assert result["accuracy"]["previous"] == pytest.approx(0.95)
+    assert result["accuracy"]["direction"] == "up"
+
+    assert result["lines_completed"] == {
+        "current": 2, "previous": 2, "delta": 0, "direction": "same",
+    }
+
+    # current 2+2=4s typing, previous 3+4=7s -- less time this session
+    assert result["time_typing_s"]["current"] == pytest.approx(4.0)
+    assert result["time_typing_s"]["previous"] == pytest.approx(7.0)
+    assert result["time_typing_s"]["direction"] == "down"
+
+
+def test_session_deltas_worst_category_unchanged():
+    """Same target line, same single mistake (a quote mistyped), in both
+    sessions -- the worst category's rate must come out identical and
+    ``direction`` must read "unchanged", not "improved" or "worse"."""
+    def mk(key, when):
+        return A(key, EventTime=when, Answer="a'a", user_input="axa",
+                  Wpm=50.0, Accuracy=0.67, Duration=2.0, Passed=False)
+
+    attempts = [mk("k1", "20-09-2026 09:00:00"), mk("k2", "20-09-2026 10:30:00")]
+    result = analysis.session_deltas(attempts)
+    assert result["has_previous"] is True
+    wc = result["worst_category"]
+    assert wc["category"] == "quote"
+    assert wc["current_rate"] == pytest.approx(1.0)
+    assert wc["previous_rate"] == pytest.approx(1.0)
+    assert wc["direction"] == "unchanged"
+
+
+def test_session_deltas_worst_category_improved():
+    """Quote is the worst category in both sessions (it out-ranks the always-
+    correct "lower" category, which sits at a 0.0 rate in both), but this
+    session's quote error rate is lower than last session's -- must read
+    "improved"."""
+    worse = A("k1", EventTime="20-09-2026 09:00:00", Answer="a''a", user_input="axxa",
+              Wpm=50.0, Accuracy=0.5, Duration=2.0, Passed=False)
+    better = A("k2", EventTime="20-09-2026 10:30:00", Answer="a''a", user_input="a'xa",
+               Wpm=55.0, Accuracy=0.75, Duration=2.0, Passed=False)
+    result = analysis.session_deltas([worse, better])
+    wc = result["worst_category"]
+    assert wc["category"] == "quote"
+    assert wc["previous_rate"] == pytest.approx(1.0)  # both quotes wrong
+    assert wc["current_rate"] == pytest.approx(0.5)  # one of two quotes wrong
+    assert wc["direction"] == "improved"
+
+
+# ---------------------------------------------------------------------------
+# next_action -- one recommended thing to do next (added 2026-09-20)
+# ---------------------------------------------------------------------------
+
+
+def test_next_action_no_attempts_at_all():
+    report = {"data_coverage": {"total_attempts": 0}, "weak_points": {}}
+    result = analysis.next_action(report)
+    assert result["kind"] is None
+    assert result["target"] is None
+    assert result["detail"] is None
+    assert "not enough data" in result["message"].lower()
+
+
+def test_next_action_prefers_the_worst_error_category():
+    report = {
+        "data_coverage": {"total_attempts": 209},
+        "weak_points": {
+            "error_categories": {
+                "categories": [
+                    {"category": "quote", "seen": 20, "mistyped": 1, "error_rate": 0.05},
+                    {"category": "punct", "seen": 934, "mistyped": 4, "error_rate": 0.004},
+                ]
+            },
+            "keystroke_character_errors": {
+                "characters": [{"char": "e", "seen": 50, "mistyped": 40, "error_rate": 0.8}]
+            },
+        },
+    }
+    result = analysis.next_action(report)
+    assert result["kind"] == "category"
+    assert result["target"] == "quote"
+    assert "quote" in result["message"].lower()
+
+
+def test_next_action_falls_back_to_worst_character():
+    report = {
+        "data_coverage": {"total_attempts": 50},
+        "weak_points": {
+            "error_categories": {"categories": []},
+            "keystroke_character_errors": {
+                "characters": [{"char": "e", "seen": 5, "mistyped": 3, "error_rate": 0.6}]
+            },
+        },
+    }
+    result = analysis.next_action(report)
+    assert result["kind"] == "char"
+    assert result["target"] == "e"
+
+
+def test_next_action_falls_back_to_worst_confusion():
+    report = {
+        "data_coverage": {"total_attempts": 50},
+        "weak_points": {
+            "error_categories": {"categories": []},
+            "keystroke_character_errors": {"characters": []},
+            "keystroke_confusions": {"pairs": [{"intended": "h", "typed": "r", "count": 3}]},
+        },
+    }
+    result = analysis.next_action(report)
+    assert result["kind"] == "confusion"
+    assert result["target"] == "h>r"
+
+
+def test_next_action_gentle_message_when_nothing_clears_the_noise_floor():
+    report = {"data_coverage": {"total_attempts": 5}, "weak_points": {}}
+    result = analysis.next_action(report)
+    assert result["kind"] is None
+    assert "keep typing" in result["message"].lower()
+
+
+def test_worst_category_declines_to_name_one_when_nothing_was_mistyped():
+    """A perfect session has no worst category. Naming the alphabetically
+    first one at 0.0% is a confident statement about nothing, and that is what
+    the real store produced before this guard."""
+    perfect = {
+        "categories": [
+            {"category": "lower", "seen": 100, "mistyped": 0, "error_rate": 0.0},
+            {"category": "quote", "seen": 4, "mistyped": 0, "error_rate": 0.0},
+        ]
+    }
+    got = analysis._worst_category_delta(perfect, perfect)
+    assert got == {
+        "category": None,
+        "current_rate": None,
+        "previous_rate": None,
+        "direction": None,
+    }
+
+
+def test_worst_category_picks_the_highest_rate_not_the_first_row():
+    current = {
+        "categories": [
+            {"category": "lower", "seen": 100, "mistyped": 1, "error_rate": 0.01},
+            {"category": "quote", "seen": 20, "mistyped": 1, "error_rate": 0.05},
+        ]
+    }
+    previous = {
+        "categories": [{"category": "quote", "seen": 20, "mistyped": 2, "error_rate": 0.10}]
+    }
+    got = analysis._worst_category_delta(current, previous)
+    assert got["category"] == "quote"
+    assert got["current_rate"] == 0.05
+    assert got["previous_rate"] == 0.10
+    assert got["direction"] == "improved"

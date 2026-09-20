@@ -1,4 +1,4 @@
-"""config.py -- the six user-editable criteria settings, persisted as JSON.
+"""config.py -- the user-editable criteria and display settings, persisted as JSON.
 
 Written 2026-09-19 for the "Paths and migration" stream of the repo's stage 4 refactor
 (see docs/Refactor_Plan.md). Replaces the ad hoc load_config/save_config pair on the old
@@ -20,6 +20,31 @@ from dataclasses import asdict, dataclass
 
 from . import paths
 
+#: The typing line's width in characters (Wings v2, docs/mockups/UI_Mockup_Wings_v2.html
+#: and docs/UI_Refresh_Notes.md). 50 is the floor the mockup settled on; 86 is the
+#: ceiling because that is as wide as the line can get before it starts to crowd the
+#: permanent left/right rails (``--rail``/``--panel`` in the mockup) -- past that the
+#: measure would run under the wings rather than floating between them.
+MEASURE_CH_MIN = 50
+MEASURE_CH_MAX = 86
+_MEASURE_CH_DEFAULT = 78
+
+
+def _clamp_measure_ch(value) -> int:
+    """Coerce to int and clamp to [MEASURE_CH_MIN, MEASURE_CH_MAX], defensively.
+
+    Used by ``Settings.from_dict`` so a corrupt or hand-edited settings.json
+    (a float, a string, a wildly out-of-range number) can never produce a
+    ``Settings`` object outside the range the rails can actually display --
+    the same defence-in-depth as the rest of ``from_dict``, which is why this
+    exists here as well as the type/range check in ``POST /api/settings``.
+    """
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        value = _MEASURE_CH_DEFAULT
+    return min(max(value, MEASURE_CH_MIN), MEASURE_CH_MAX)
+
 
 @dataclass
 class Settings:
@@ -36,6 +61,10 @@ class Settings:
     # richest. Switch it off in Settings if it gets in the way.
     stop_on_error: bool = True
     live_stats: bool = True
+    # Added 2026-09-20 for the Wings v2 UI refresh (docs/mockups/UI_Mockup_Wings_v2.html):
+    # the typing line's width, in characters. See MEASURE_CH_MIN/MAX above for why
+    # 86 is the ceiling.
+    measure_ch: int = _MEASURE_CH_DEFAULT
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -49,6 +78,7 @@ class Settings:
             flash_on_mistake=bool(data.get("flash_on_mistake", defaults.flash_on_mistake)),
             stop_on_error=bool(data.get("stop_on_error", defaults.stop_on_error)),
             live_stats=bool(data.get("live_stats", defaults.live_stats)),
+            measure_ch=_clamp_measure_ch(data.get("measure_ch", defaults.measure_ch)),
         )
 
 

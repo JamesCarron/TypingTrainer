@@ -253,6 +253,7 @@ def test_settings_round_trip(running_server):
         "flash_on_mistake",
         "stop_on_error",
         "live_stats",
+        "measure_ch",
     }
 
     status, payload = _post(running_server, "/api/settings", {"min_wpm": 42.0})
@@ -265,6 +266,44 @@ def test_settings_round_trip(running_server):
 
 def test_settings_unknown_key_is_400(running_server):
     status, payload = _post(running_server, "/api/settings", {"nonsense": True})
+    assert status == 400
+    assert "error" in payload
+
+
+# ---- measure_ch (Wings v2 line width, docs/mockups/UI_Mockup_Wings_v2.html) --------------
+
+
+def test_measure_ch_round_trips(running_server):
+    status, payload = _post(running_server, "/api/settings", {"measure_ch": 60})
+    assert status == 200
+    assert payload["measure_ch"] == 60
+
+    status, payload = _get(running_server, "/api/settings")
+    assert status == 200
+    assert payload["measure_ch"] == 60
+
+
+def test_measure_ch_is_clamped_to_the_valid_range(running_server):
+    status, payload = _post(running_server, "/api/settings", {"measure_ch": 999})
+    assert status == 200
+    assert payload["measure_ch"] == 86  # MEASURE_CH_MAX
+
+    status, payload = _post(running_server, "/api/settings", {"measure_ch": 1})
+    assert status == 200
+    assert payload["measure_ch"] == 50  # MEASURE_CH_MIN
+
+
+def test_measure_ch_rejects_non_integer(running_server):
+    status, payload = _post(running_server, "/api/settings", {"measure_ch": "wide"})
+    assert status == 400
+    assert "error" in payload
+
+    status, payload = _post(running_server, "/api/settings", {"measure_ch": 78.5})
+    assert status == 400
+    assert "error" in payload
+
+    # bool is an int subclass in Python -- must not be accepted as a width.
+    status, payload = _post(running_server, "/api/settings", {"measure_ch": True})
     assert status == 400
     assert "error" in payload
 

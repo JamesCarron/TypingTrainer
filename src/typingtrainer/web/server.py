@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .. import analysis, drills, history
+from .. import analysis, config, drills, history
 from ..session import Session, TextNotFound
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -241,6 +241,41 @@ def _api_session_summary(body, session: Session):
     return summary
 
 
+def _api_review(body, session: Session):
+    """Everything the review screen (Wings v2 "option C", a moment -- see
+    docs/mockups/UI_Mockup_Wings_v2.html and docs/UI_Refresh_Notes.md) needs
+    after a session ends, in one call: the session summary (reusing
+    ``_api_session_summary`` so there is exactly one place that assembles
+    it, not two), what moved since last session (``analysis.session_deltas``,
+    given the whole history so it can find and split out the last two
+    sessions itself), one recommended next action
+    (``analysis.next_action``, over the whole-history report -- weak points
+    are a standing diagnosis, not scoped to one session), and the all-time
+    streak (``analysis.overall_stats``, same whole-history reads, so this is
+    a page-load call like ``/api/analysis``, not a per-keystroke one).
+
+    Works and returns 200 against a completely empty store: every piece it
+    calls already tolerates no data, so this needs no special case of its
+    own (see the docstrings of ``session_deltas`` and ``next_action`` for how
+    each degrades).
+    """
+    summary = _api_session_summary(body, session)
+    all_attempts = history.iter_attempts()
+    deltas = analysis.session_deltas(all_attempts)
+    report = analysis.full_report()
+    action = analysis.next_action(report)
+    streak = analysis.overall_stats(all_attempts)
+    return {
+        "session_summary": summary,
+        "deltas": deltas,
+        "next_action": action,
+        "streak": {
+            "current_streak_days": streak["current_streak_days"],
+            "longest_streak_days": streak["longest_streak_days"],
+        },
+    }
+
+
 def _api_practice(body, session: Session):
     """The improvement-loop plan: weak targets, a drill, hard lines, the watchlist,
     and a criteria suggestion -- see ``drills.practice_plan``, the only store-touching
@@ -327,6 +362,14 @@ def _api_settings_get(body, session: Session):
 def _api_settings_post(body, session: Session):
     from dataclasses import asdict
 
+    if "measure_ch" in body:
+        value = body["measure_ch"]
+        # bool is an int subclass in Python; reject it explicitly rather than
+        # silently storing True/False as 1/0 characters wide.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ApiError(400, "measure_ch must be an integer")
+        body = dict(body)
+        body["measure_ch"] = min(max(value, config.MEASURE_CH_MIN), config.MEASURE_CH_MAX)
     try:
         new_settings = session.update_settings(**body)
     except ValueError as exc:
@@ -381,6 +424,7 @@ ROUTES = {
     ("GET", "/api/state"): _api_state,
     ("GET", "/api/analysis"): _api_analysis,
     ("GET", "/api/session_summary"): _api_session_summary,
+    ("GET", "/api/review"): _api_review,
     ("GET", "/api/practice"): _api_practice,
     ("POST", "/api/drill"): _api_drill,
     ("POST", "/api/criteria/apply"): _api_criteria_apply,
