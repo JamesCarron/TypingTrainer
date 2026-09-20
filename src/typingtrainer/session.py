@@ -123,6 +123,24 @@ class Session:
             shutil.copyfile(source, target)
         return BUNDLED_NAMES.get(target.name, target.stem)
 
+    # ---- who is playing ----------------------------------------------------
+
+    @property
+    def user(self) -> str:
+        return history.active_user()
+
+    def switch_user(self, name: str) -> str:
+        """Make ``name`` the active user and reload their place in the book.
+
+        Everything the store reads is scoped to the active user, so switching
+        is: register them, make them active, then re-select the current text,
+        which is what pulls their saved position rather than the last person's.
+        """
+        history.ensure_user(name)
+        history.set_active_user(name)
+        self.select_text(self.text_name)
+        return name
+
     # ---- where the player is ----------------------------------------------
 
     @property
@@ -346,6 +364,8 @@ class Session:
 
     def snapshot(self) -> dict:
         return {
+            "user": self.user,
+            "user_is_guest": history.is_anonymous(self.user),
             "state": self.state,
             "text_name": self.text_name,
             "position": self.position,

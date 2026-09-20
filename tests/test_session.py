@@ -189,6 +189,8 @@ def test_add_text_copies_into_the_library(sample, isolated, tmp_path):
 def test_snapshot_has_everything_a_view_needs(sample):
     snap = Session().snapshot()
     assert set(snap) == {
+        "user",
+        "user_is_guest",
         "state",
         "text_name",
         "position",
@@ -229,3 +231,101 @@ def test_preceding_lines_is_capped(sample, isolated, monkeypatch):
     s = Session()
     s.jump_to(3)
     assert s.preceding_lines(n=1) == ["beta line"]
+
+
+# --- per-user progress (2026-09-20) -----------------------------------------
+
+
+def test_each_user_keeps_their_own_place_in_the_book(sample):
+    """The whole point of users: two people reading the same text do not move
+    each other's bookmark."""
+    s = Session()
+    s.switch_user("Alice")
+    s.jump_to(3)
+    assert s.position == 2
+
+    s.switch_user("Bob")
+    assert s.position == 0        # Bob has never been here
+    s.jump_to(2)
+    assert s.position == 1
+
+    s.switch_user("Alice")
+    assert s.position == 2        # Alice's place is untouched
+
+
+def test_attempts_are_scoped_to_the_user_who_made_them(sample):
+    from typingtrainer import history
+
+    s = Session()
+    s.switch_user("Alice")
+    s.update_settings(require_accuracy=False, require_wpm=False)
+    s.start()
+    s.submit_line("alpha line", 2.0)
+    assert len(history.read_attempts()) == 1
+
+    s.switch_user("Bob")
+    assert history.read_attempts() == {}
+    assert len(history.read_attempts("Alice")) == 1
+
+
+def test_a_guest_keeps_their_progress_when_they_take_a_name(sample):
+    """Renaming is how an anonymous browser stops being anonymous; losing the
+    attempts made before that point would defeat the purpose."""
+    from typingtrainer import history
+
+    s = Session()
+    guest = history.next_guest_name()
+    s.switch_user(guest)
+    s.update_settings(require_accuracy=False, require_wpm=False)
+    s.start()
+    s.submit_line("alpha line", 2.0)
+    s.jump_to(3)
+
+    moved = history.rename_user(guest, "Carol")
+    assert moved["attempts"] == 1
+    assert moved["positions"] == 1
+    assert history.active_user() == "Carol"
+    assert len(history.read_attempts("Carol")) == 1
+    assert history.get_position("tiny", user="Carol") == 2
+    assert not history.user_exists(guest)
+
+
+def test_renaming_onto_an_existing_name_is_refused(sample):
+    """Merging two histories silently would be unrecoverable."""
+    from typingtrainer import history
+
+    s = Session()
+    s.switch_user("Alice")
+    s.switch_user("Bob")
+    with pytest.raises(ValueError):
+        history.rename_user("Bob", "Alice")
+
+
+def test_clearing_history_only_clears_your_own(sample):
+    from typingtrainer import history
+
+    s = Session()
+    s.update_settings(require_accuracy=False, require_wpm=False)
+    s.switch_user("Alice")
+    s.start(); s.submit_line("alpha line", 2.0)
+    s.switch_user("Bob")
+    s.start(); s.submit_line("alpha line", 2.0)
+
+    s.reset_history("all")
+    assert history.read_attempts() == {}                 # Bob is empty
+    assert len(history.read_attempts("Alice")) == 1      # Alice is untouched
+
+
+def test_a_minted_guest_is_flagged_but_a_chosen_name_is_not(sample):
+    """The page offers "save progress as..." from this flag, so it must not be
+    a guess at the shape of the name -- "Guest 7" is a legal thing to be called."""
+    from typingtrainer import history
+
+    s = Session()
+    guest = history.next_guest_name()
+    history.ensure_user(guest, anonymous=True)
+    s.switch_user(guest)
+    assert s.snapshot()["user_is_guest"] is True
+
+    s.switch_user("Guest 99")          # chosen deliberately, not minted
+    assert s.snapshot()["user_is_guest"] is False

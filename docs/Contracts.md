@@ -56,6 +56,9 @@ One process, one `Session`, bound to `127.0.0.1` on an ephemeral port. Every res
 | `POST /api/settings` | any subset of the six | the new settings |
 | `POST /api/history/reset` | `{"scope": "current"\|"all"}` | `{"removed": n}` |
 | `POST /api/text/add` | `{"path": ...}` | the new text's name and the new snapshot |
+| `GET /api/users` | — | `{"users": [{"name", "anonymous", "attempts", "last_active", "line"}], "current": name}`, most recently active first |
+| `POST /api/user` | `{"name": ...}` or `{"anonymous": true}` | the snapshot for that user; creates them if new, mints `Guest N` when anonymous |
+| `POST /api/user/rename` | `{"from": ..., "to": ...}` | the snapshot under the new name; 400 if the target exists |
 | `POST /api/pick_path` | `{"kind": "file"\|"dir"}` | `{"path": ...}` or `{"path": null}` if cancelled — native picker in a subprocess behind a lock |
 
 Rules that go with it:
@@ -63,4 +66,5 @@ Rules that go with it:
 - **The browser never computes a score that is kept.** It computes the live per-character diff for colouring, and that is all. Accuracy, WPM and pass/fail come back from `POST /api/attempt`, and the page renders what the server said even if its own diff disagreed.
 - **The live diff must agree with `scoring.compare_lines` anyway**, and `tests/js/test_diff_parity.py` proves it over `tests/fixtures/diff_corpus.json`. One fixture file, both implementations; two fixture lists would be the same bug as two implementations.
 - **Keystrokes are sent with the attempt, not streamed.** `keystrokes` is a list of `{"char", "ms", "correct"}` in press order, `ms` measured from the first keypress of the line, covering every character key pressed — including characters later deleted, and including ones stop-on-error refused. Backspaces are not entries. The field is optional and malformed lists are rejected rather than coerced, because a wrong number in a latency statistic is worse than no number. Added 2026-09-19; see `docs/UI_Refresh_Notes.md`.
+- **Users are a choice of name, not authentication.** There are no passwords and nothing is protected; the point is separate progress on a shared machine. A browser with no remembered name is given a `Guest N` automatically and can put a real name on that progress later through the rename, which carries every attempt and the reading position across. Renaming onto an existing name is refused rather than merged: two histories joined by accident cannot be separated again. Added 2026-09-20.
 - **No state in the page that the server does not also hold.** A reload re-reads `GET /api/state` and lands exactly where the player was.

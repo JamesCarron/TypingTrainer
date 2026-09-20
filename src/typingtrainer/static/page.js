@@ -39,6 +39,26 @@
  *   - error marking is one of five styles (ERROR_STYLES), applied as an
  *     `err-*` class on #stage
  *
+ * Rewritten again 2026-09-20 for per-user progress (multiple people sharing
+ * one machine, no authentication -- just a chosen name, see AGENTS.md):
+ *   - nothing ever blocks the page on load. startUserFlow() reads
+ *     localStorage["typingtrainer.user"] and POSTs it to /api/user; with
+ *     nothing remembered (or that call failing) it POSTs {anonymous: true}
+ *     instead, which mints a guest (a name like "Guest 1") -- either way
+ *     typing is available immediately, there is no first-run screen
+ *   - every localStorage access is wrapped in try/catch (rememberUser) --
+ *     it throws in a private window and in some embedded contexts, and the
+ *     tool must still work, just asking (anonymously) again next load
+ *   - "Switch user" (left drawer) is an ordinary inline control, not a
+ *     blocking screen: it expands a list from GET /api/users in place, with
+ *     its own Cancel (openSwitchUser/closeSwitchUser)
+ *   - "Save progress as..." (left drawer) shows only while the current user
+ *     is an unnamed guest -- detected by isGuestName() against the "Guest
+ *     <n>" shape the brief describes, since the API does not carry an
+ *     explicit is-guest flag -- and calls POST /api/user/rename
+ *   - the left rail's STEP/LINE/OF group gains a USER figure, truncated by
+ *     CSS (.rf .v.trunc) rather than letting the rail grow for a long name
+ *
  * `diff()` below must have exactly the semantics of
  * `typingtrainer.scoring.compare_lines`: itertools.zip_longest(guess, answer,
  * fillvalue=False), so the result is as long as the LONGER string. It is
@@ -108,6 +128,11 @@ if (typeof window !== "undefined") {
     const DEFAULT_MEASURE_CH = 78;
     const ERROR_STYLES = ["tint", "underline", "dot", "strike", "wavy"];
     const DEFAULT_ERROR_STYLE = "tint";
+    // Per-user progress (no authentication -- see AGENTS.md).
+    const USER_STORAGE_KEY = "typingtrainer.user";
+    // The API does not carry an explicit is-guest flag, so a guest is
+    // recognised by the shape the brief specifies a minted name takes.
+    const GUEST_NAME_RE = /^Guest \d+$/;
     // Fixed per the agreed design, not a setting: the current line is always
     // this multiple of font_size_px.
     const CURRENT_LINE_EMPHASIS = 1.32;
@@ -179,6 +204,7 @@ if (typeof window !== "undefined") {
 
     let drawerOpen = null; // "left" | "right" | null
     let reviewOpen = false;
+    let switchUserOpen = false; // inline list in the left drawer, not a blocking screen
 
     const els = {};
 
@@ -226,6 +252,15 @@ if (typeof window !== "undefined") {
       els.errorStyleInput = $("error-style-input");
       els.resetHistoryBtn = $("reset-history-btn");
       els.finishSessionBtn = $("finish-session-btn");
+      els.railUser = $("rail-user");
+      els.panelUserName = $("panel-user-name");
+      els.switchUserBtn = $("switch-user-btn");
+      els.switchUserList = $("switch-user-list");
+      els.switchUserUsers = $("switch-user-users");
+      els.switchUserCancelBtn = $("switch-user-cancel-btn");
+      els.saveProgress = $("save-progress");
+      els.saveProgressInput = $("save-progress-input");
+      els.saveProgressBtn = $("save-progress-btn");
 
       // Right rail / drawer.
       els.railWpm = $("rail-wpm");
@@ -259,6 +294,16 @@ if (typeof window !== "undefined") {
       els.finishSessionBtn.addEventListener("click", openReview);
       els.reviewStartBtn.addEventListener("click", startNextFromReview);
       els.reviewBackBtn.addEventListener("click", closeReview);
+
+      els.switchUserBtn.addEventListener("click", toggleSwitchUser);
+      els.switchUserCancelBtn.addEventListener("click", closeSwitchUser);
+      els.saveProgressBtn.addEventListener("click", onSaveProgress);
+      els.saveProgressInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onSaveProgress();
+        }
+      });
 
       for (const wing of [els.wingLeft, els.wingRight]) {
         wing.addEventListener("click", (event) => {
@@ -318,9 +363,7 @@ if (typeof window !== "undefined") {
         }
       });
 
-      await Promise.all([refreshState(), refreshTexts()]);
-      refreshWorstKeys();
-      focusTypingArea();
+      await startUserFlow();
     }
 
     function focusTypingArea() {
@@ -437,6 +480,7 @@ if (typeof window !== "undefined") {
       // setting said five -- and nothing re-rendered to correct it.
       renderSettingsForm();
       renderLeftRail();
+      renderUserPanel();
       renderLines();
       renderInstructions();
       updateLiveRail();
@@ -841,6 +885,187 @@ if (typeof window !== "undefined") {
         option.textContent = `${t.name} (${t.source})`;
         if (t.name === data.current) option.selected = true;
         els.textPicker.appendChild(option);
+      }
+    }
+
+    // ---- per-user progress: no login screen, just a remembered/guest name --
+    //
+    // Nothing ever blocks the page: startUserFlow runs once at startup,
+    // before the first render, and always lands on SOME user (a remembered
+    // name, or a freshly minted guest) before typing begins. See the header
+    // comment for the shape of POST /api/user and /api/user/rename.
+
+    function isGuestName(name) {
+      // Prefer the server's flag: a guest is one the tool minted, not one whose
+      // name happens to look like "Guest 7" -- which is a legal thing for a
+      // person to call themselves. The pattern stays only as a fallback for a
+      // snapshot that predates the flag.
+      if (snapshot && typeof snapshot.user_is_guest === "boolean") {
+        return snapshot.user_is_guest;
+      }
+      return /^Guest \d+$/.test(name || "");
+    }
+
+    // Wrapped in try/catch everywhere it is called: localStorage throws in a
+    // private window and in some embedded contexts, and the tool must still
+    // work -- it will just ask (anonymously, silently) again next load.
+    function rememberUser(name) {
+      try {
+        window.localStorage.setItem(USER_STORAGE_KEY, name);
+      } catch (err) {
+        // ignored -- see above
+      }
+    }
+
+    async function startUserFlow() {
+      let remembered = null;
+      try {
+        remembered = window.localStorage.getItem(USER_STORAGE_KEY);
+      } catch (err) {
+        remembered = null;
+      }
+      try {
+        const data = remembered
+          ? await API.post("/api/user", { name: remembered })
+          : await API.post("/api/user", { anonymous: true });
+        rememberUser(data.user);
+        await afterUserChosen(data);
+      } catch (err) {
+        // A remembered name that no longer works (or any other failure) must
+        // not strand the page with no user and nothing to type against --
+        // fall back to a fresh guest rather than surfacing the error.
+        try {
+          const data = await API.post("/api/user", { anonymous: true });
+          rememberUser(data.user);
+          await afterUserChosen(data);
+        } catch (err2) {
+          showError(err2.message);
+        }
+      }
+    }
+
+    // Common tail for every path that lands on a user (startup, switching,
+    // renaming): adopt the snapshot the server returned, refresh the text
+    // list and worst-keys for that user, and hand focus back to typing.
+    async function afterUserChosen(data) {
+      snapshot = data;
+      clearError();
+      try {
+        await refreshTexts();
+      } catch (err) {
+        // best-effort, same as any other /api/texts failure
+      }
+      render();
+      refreshWorstKeys();
+      focusTypingArea();
+    }
+
+    function renderUserPanel() {
+      const name = snapshot && snapshot.user;
+      const label = name || "—";
+      if (els.railUser) {
+        els.railUser.textContent = label;
+        els.railUser.title = name || "";
+      }
+      if (els.panelUserName) {
+        els.panelUserName.textContent = label;
+      }
+      if (els.saveProgress) {
+        els.saveProgress.hidden = !isGuestName(name);
+      }
+    }
+
+    function userMeta(u) {
+      const line = u && u.line != null ? `line ${u.line}` : "not started";
+      const attempts = u && typeof u.attempts === "number" ? u.attempts : 0;
+      return `${line} · ${attempts} attempt${attempts === 1 ? "" : "s"}`;
+    }
+
+    function toggleSwitchUser() {
+      if (switchUserOpen) {
+        closeSwitchUser();
+      } else {
+        openSwitchUser();
+      }
+    }
+
+    async function openSwitchUser() {
+      switchUserOpen = true;
+      els.switchUserList.hidden = false;
+      els.switchUserUsers.innerHTML = "";
+      try {
+        const data = await API.get("/api/users");
+        renderSwitchUserList(data.users, data.current);
+      } catch (err) {
+        // Defensive: a broken/empty list still leaves Cancel working.
+        renderSwitchUserList([], null);
+      }
+    }
+
+    function closeSwitchUser() {
+      switchUserOpen = false;
+      els.switchUserList.hidden = true;
+      focusTypingArea();
+    }
+
+    function renderSwitchUserList(users, current) {
+      els.switchUserUsers.innerHTML = "";
+      for (const u of users || []) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "switch-user-user-btn";
+        if (current && u.name === current) btn.classList.add("current");
+        const nameEl = document.createElement("span");
+        nameEl.className = "switch-user-user-name";
+        nameEl.textContent = u.name;
+        const metaEl = document.createElement("span");
+        metaEl.className = "switch-user-user-meta";
+        metaEl.textContent = userMeta(u);
+        btn.appendChild(nameEl);
+        btn.appendChild(metaEl);
+        btn.addEventListener("click", () => selectExistingUser(u.name));
+        els.switchUserUsers.appendChild(btn);
+      }
+    }
+
+    async function selectExistingUser(name) {
+      try {
+        const data = await API.post("/api/user", { name: name });
+        rememberUser(name);
+        closeSwitchUser();
+        await afterUserChosen(data);
+      } catch (err) {
+        showError(err.message);
+        focusTypingArea();
+      }
+    }
+
+    async function onSaveProgress() {
+      const raw = els.saveProgressInput.value;
+      const name = raw.trim();
+      if (!name) {
+        showError("Enter a name.");
+        return;
+      }
+      if (name.length > 40) {
+        showError("Name is too long (max 40 characters).");
+        return;
+      }
+      const from = snapshot && snapshot.user;
+      if (!from) {
+        showError("No current user to rename.");
+        return;
+      }
+      try {
+        const data = await API.post("/api/user/rename", { from: from, to: name });
+        rememberUser(data.user || name);
+        els.saveProgressInput.value = "";
+        clearError();
+        await afterUserChosen(data);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        focusTypingArea();
       }
     }
 

@@ -552,3 +552,56 @@ def test_picker_module_degrades_without_tkinter(monkeypatch):
     from typingtrainer.web import picker
 
     assert picker.pick("nonsense") == {"error": "unknown picker kind: nonsense"}
+
+
+# --- users over the API (2026-09-20) ----------------------------------------
+
+
+def test_anonymous_user_is_minted_without_being_asked(running_server):
+    """A browser with no remembered name must be able to start typing at once."""
+    status, snap = _post(running_server, "/api/user", {"anonymous": True})
+    assert status == 200
+    assert snap["user"].startswith("Guest ")
+
+    status, payload = _get(running_server, "/api/users")
+    assert status == 200
+    assert payload["current"] == snap["user"]
+    assert any(u["name"] == snap["user"] and u["anonymous"] for u in payload["users"])
+
+
+def test_switching_to_a_named_user_creates_them(running_server):
+    status, snap = _post(running_server, "/api/user", {"name": "Alice"})
+    assert status == 200
+    assert snap["user"] == "Alice"
+    status, payload = _get(running_server, "/api/users")
+    assert "Alice" in [u["name"] for u in payload["users"]]
+
+
+def test_a_bad_user_name_is_refused(running_server):
+    for bad in ["", "   ", "x" * 41, 7, None]:
+        status, payload = _post(running_server, "/api/user", {"name": bad})
+        assert status == 400, bad
+        assert "error" in payload
+
+
+def test_rename_carries_the_progress_and_refuses_a_collision(running_server):
+    status, snap = _post(running_server, "/api/user", {"anonymous": True})
+    guest = snap["user"]
+    _post(running_server, "/api/position", {"line": 3})
+
+    status, snap = _post(running_server, "/api/user/rename", {"from": guest, "to": "Dana"})
+    assert status == 200
+    assert snap["user"] == "Dana"
+    assert snap["position"] == 2          # the guest's place came with them
+
+    _post(running_server, "/api/user", {"name": "Eve"})
+    status, payload = _post(running_server, "/api/user/rename", {"from": "Eve", "to": "Dana"})
+    assert status == 400
+    assert "already exists" in payload["error"]
+
+
+def test_state_reports_the_current_user(running_server):
+    _post(running_server, "/api/user", {"name": "Frank"})
+    status, snap = _get(running_server, "/api/state")
+    assert status == 200
+    assert snap["user"] == "Frank"

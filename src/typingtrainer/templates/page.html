@@ -27,6 +27,17 @@
   the page's own rules can reference the embedded families. The permanent
   rails, the drawers, the right rail's live figures and the end-of-session
   review are unchanged.
+
+  Rewritten again 2026-09-20 for per-user progress (multiple people sharing
+  one machine, no authentication -- just a chosen name, see AGENTS.md).
+  Nothing ever blocks the page on load: a remembered name from localStorage
+  (or, failing that, a freshly minted guest) is posted to /api/user before
+  the first paint, so typing is always immediately available. The left
+  drawer's session section gains a "Switch user" control (an ordinary
+  inline list, not a blocking screen, with its own Cancel) and a
+  "Save progress as..." field shown only while the current user is an
+  unnamed guest. The left rail's STEP/LINE/OF group gains a USER figure.
+  See page.js's startUserFlow/openSwitchUser/onSaveProgress.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -53,6 +64,8 @@
         <div class="rf"><span class="k">line</span><span class="v sm" id="rail-line">&mdash;</span></div>
         <div class="rf"><span class="k">of</span><span class="v sm" id="rail-total">&mdash;</span></div>
         <div class="divider"></div>
+        <div class="rf"><span class="k">user</span><span class="v sm trunc" id="rail-user">&mdash;</span></div>
+        <div class="divider"></div>
         <div class="more">plan &amp;<br />settings &rsaquo;</div>
       </div>
       <div class="panel" id="panel-left">
@@ -60,6 +73,27 @@
         <div class="panel-line" id="panel-text-name">&mdash;</div>
         <div class="panel-line clickable" id="panel-position" title="Click to jump to a line">&mdash;</div>
         <div class="panel-line" id="panel-last-result"></div>
+
+        <!--
+          Per-user progress (no authentication -- a chosen name only, see
+          AGENTS.md). "Switch user" is an ordinary drawer control, not a
+          blocking screen: it expands the inline list below and has its own
+          Cancel. "Save progress as..." only shows while the current user is
+          an unnamed guest (a name like "Guest 1", minted by POST /api/user
+          {anonymous: true} on first visit); once named it disappears. See
+          page.js: startUserFlow, openSwitchUser, onSaveProgress.
+        -->
+        <div class="panel-line" id="panel-user">User: <span id="panel-user-name">&mdash;</span></div>
+        <button id="switch-user-btn" type="button" class="btn ghost">Switch user</button>
+        <div class="switch-user-list" id="switch-user-list" hidden>
+          <div class="switch-user-users" id="switch-user-users"></div>
+          <button id="switch-user-cancel-btn" type="button" class="btn ghost">Cancel</button>
+        </div>
+        <div class="save-progress" id="save-progress" hidden>
+          <div class="panel-note">Playing as a guest &mdash; name yourself to keep this progress.</div>
+          <input type="text" id="save-progress-input" maxlength="40" placeholder="Your name" aria-label="Save progress as" />
+          <button id="save-progress-btn" type="button" class="btn">Save</button>
+        </div>
 
         <h5>Text</h5>
         <select id="text-picker" aria-label="Select text"></select>

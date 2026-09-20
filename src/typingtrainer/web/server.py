@@ -40,6 +40,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .. import analysis, config, drills, history
+from .. import history
 from ..session import Session, TextNotFound
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -457,9 +458,61 @@ def _api_pick_path(body, session: Session):
     return result
 
 
+#: A name has to fit on a rail and in a picker; anything longer is a mistake.
+MAX_USER_NAME = 40
+
+
+def _clean_user_name(raw) -> str:
+    if not isinstance(raw, str):
+        raise ApiError(400, "name must be a string")
+    name = raw.strip()
+    if not name:
+        raise ApiError(400, "name must not be empty")
+    if len(name) > MAX_USER_NAME:
+        raise ApiError(400, f"name must be {MAX_USER_NAME} characters or fewer")
+    return name
+
+
+def _api_users(body, session: Session):
+    return {"users": history.list_users(), "current": session.user}
+
+
+def _api_user_post(body, session: Session):
+    """Switch to a user, minting an anonymous one when the browser has none.
+
+    Nothing blocks on being asked who you are: a browser that arrives with no
+    remembered name asks for a guest here, starts typing immediately, and can
+    put a real name on that progress later through the rename endpoint.
+    """
+    if body.get("anonymous"):
+        name = history.next_guest_name()
+        history.ensure_user(name, anonymous=True)
+    else:
+        name = _clean_user_name(body.get("name"))
+    session.switch_user(name)
+    return session.snapshot()
+
+
+def _api_user_rename(body, session: Session):
+    """Give a guest's progress a real name, keeping every attempt."""
+    old = _clean_user_name(body.get("from"))
+    new = _clean_user_name(body.get("to"))
+    if old == new:
+        return session.snapshot()
+    try:
+        history.rename_user(old, new)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from exc
+    session.switch_user(new)
+    return session.snapshot()
+
+
 # (method, path) -> (handler, needs_body)
 ROUTES = {
     ("GET", "/api/state"): _api_state,
+    ("GET", "/api/users"): _api_users,
+    ("POST", "/api/user"): _api_user_post,
+    ("POST", "/api/user/rename"): _api_user_rename,
     ("GET", "/api/analysis"): _api_analysis,
     ("GET", "/api/session_summary"): _api_session_summary,
     ("GET", "/api/review"): _api_review,

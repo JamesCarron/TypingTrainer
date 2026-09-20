@@ -407,6 +407,16 @@ body {
   min-width: 4.2ch;
 }
 
+/* The user figure: a name can be arbitrarily long, and the rail cannot grow
+ * for it -- clip with an ellipsis rather than widening or wrapping. */
+.rf .v.trunc {
+  display: inline-block;
+  max-width: 62px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rf .v.dash {
   color: var(--tt-sub);
 }
@@ -731,6 +741,80 @@ select {
   background: color-mix(in srgb, var(--tt-incorrect) 68%, transparent);
   border-color: transparent;
   color: var(--tt-ink);
+}
+
+/* ---- per-user progress: switch-user list and save-progress, both ordinary
+ * drawer controls in the Session section, not blocking screens ------------- */
+
+#panel-user {
+  margin-bottom: 8px;
+}
+
+.switch-user-list {
+  margin: 2px 0 12px;
+  padding: 8px;
+  border: 1px solid var(--tt-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tt-accent) 4%, var(--tt-surface));
+}
+
+.switch-user-users {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.switch-user-user-btn {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--tt-line);
+  background: var(--tt-surface);
+  color: var(--tt-ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.switch-user-user-btn:hover {
+  border-color: var(--tt-accent);
+}
+
+.switch-user-user-btn.current {
+  border-color: var(--tt-accent);
+  box-shadow: 0 0 0 1px var(--tt-accent);
+}
+
+.switch-user-user-name {
+  font-size: 12.5px;
+}
+
+.switch-user-user-meta {
+  font-size: 10.5px;
+  color: var(--tt-ink-secondary);
+}
+
+.save-progress {
+  margin: 2px 0 14px;
+}
+
+.save-progress input[type="text"] {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--tt-line);
+  background: var(--tt-surface);
+  color: var(--tt-ink);
+  width: 100%;
+  margin-bottom: 6px;
 }
 
 /* ---- review: the closing moment of a session ------------------------------ */
