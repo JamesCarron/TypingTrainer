@@ -155,7 +155,11 @@ body {
 .stage.open-left .centre,
 .stage.open-right .centre {
   opacity: 0.3;
-  pointer-events: none;
+  /* Dimmed but still clickable: clicking the text is how you dismiss an open
+     drawer, which `pointer-events: none` silently prevented -- the click
+     passed straight through to the stage, which has no handler, so the
+     drawer could only be closed from the rail or with Esc. */
+  cursor: pointer;
 }
 
 /* ---- reading surface: rows above/below the current line ------------------

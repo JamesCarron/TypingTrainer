@@ -19,6 +19,12 @@ Conventions for working in this repo. (Named `CLAUDE.md` until 2026-09-19; renam
 | A filesystem location | `src/typingtrainer/paths.py`, and nowhere else. No other module may name a directory |
 | A document of any kind | `docs/`. Root holds `README.md` and this file only |
 
+## After any change: kill, close, relaunch
+
+The server reads `templates/` and `static/` fresh on every request but loads Python once at start. So editing `page.js` appears on a refresh, while editing `config.py`, `server.py` or the engine does nothing until the process restarts — and a page talking to a stale backend fails in ways that look like the app ignoring input. That exact split once made the line-width slider snap back on release: the new front end offered a measure up to 120 while the running backend still clamped at 86.
+
+So after making any change here: kill every running `serve.py`, close the browser tab, relaunch, and hand over the new URL, saying plainly that the old one is dead. The port is ephemeral, so a tab left on the previous URL keeps rendering happily against a port nothing is listening on. Do not ask first and do not try to preserve the session — the typing progress on this project is disposable, and the position and history live in the database anyway (JC, 2026-09-20).
+
 ## Testing
 
 ```

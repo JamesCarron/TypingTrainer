@@ -145,23 +145,6 @@
           </div>
         </details>
 
-        <label class="field">
-          <span>require accuracy</span>
-          <span class="field-control"><input type="checkbox" data-setting="require_accuracy" /></span>
-        </label>
-        <label class="field">
-          <span>min accuracy (%)</span>
-          <span class="field-control"><input type="number" min="0" max="100" step="1" data-setting="min_accuracy" /></span>
-        </label>
-        <label class="field">
-          <span>require wpm</span>
-          <span class="field-control"><input type="checkbox" data-setting="require_wpm" /></span>
-        </label>
-        <label class="field">
-          <span>min wpm</span>
-          <span class="field-control"><input type="number" min="0" step="1" data-setting="min_wpm" /></span>
-        </label>
-
         <h5>Data</h5>
         <button id="reset-history-btn" type="button" class="btn ghost">Reset history</button>
 
@@ -211,6 +194,24 @@
         <div class="metric"><div class="n" id="detail-acc">&mdash;</div><div class="l">accuracy</div></div>
         <div class="metric"><div class="n" id="detail-verdict" style="font-size:14px">&mdash;</div><div class="l" id="detail-criteria-label">against criteria</div></div>
         <div class="metric"><div class="n" id="detail-stalls" style="font-size:18px">&mdash;</div><div class="l">stalls over 500&nbsp;ms</div></div>
+        <h5>Passing criteria</h5>
+        <label class="field">
+          <span>require accuracy</span>
+          <span class="field-control"><input type="checkbox" data-setting="require_accuracy" /></span>
+        </label>
+        <label class="field">
+          <span>min accuracy (%)</span>
+          <span class="field-control"><input type="number" min="0" max="100" step="1" data-setting="min_accuracy" /></span>
+        </label>
+        <label class="field">
+          <span>require wpm</span>
+          <span class="field-control"><input type="checkbox" data-setting="require_wpm" /></span>
+        </label>
+        <label class="field">
+          <span>min wpm</span>
+          <span class="field-control"><input type="number" min="0" step="1" data-setting="min_wpm" /></span>
+        </label>
+
         <h5>Worst keys</h5>
         <div class="keystrip" id="keystrip"></div>
       </div>

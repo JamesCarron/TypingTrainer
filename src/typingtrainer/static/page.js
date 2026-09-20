@@ -642,18 +642,14 @@ if (typeof window !== "undefined") {
     }
 
     function renderInstructions() {
-      const last = snapshot.last_result;
-      let resultText = "";
-      if (last) {
-        resultText = last.passed
-          ? ` Prev: Wpm: ${last.wpm.toFixed(0)}, Acc: ${(last.accuracy * 100).toFixed(1)}%`
-          : ` Prev: FAIL - Acc: ${(last.accuracy * 100).toFixed(0)}%, ${last.wpm.toFixed(0)} wpm.`;
-      }
-      if (snapshot.state === "READY") {
-        els.instructions.textContent = "Press Enter to start." + resultText;
-      } else {
-        els.instructions.textContent = "Press Enter to finish or Esc to exit." + resultText;
-      }
+      // Just the key hint. The last line's speed and accuracy used to be
+      // appended here as well, which repeated what the right rail already
+      // shows live and in more detail -- two places saying the same thing,
+      // one of them stale the moment the next keystroke lands.
+      els.instructions.textContent =
+        snapshot.state === "READY"
+          ? "Press Enter to start."
+          : "Press Enter to finish or Esc to exit.";
     }
 
     function renderSettingsForm() {
