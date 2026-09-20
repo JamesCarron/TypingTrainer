@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TypingTrainer — Zen + Coach + Cockpit, three flavours</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---------------------------------------------------------------------------
+   TypingTrainer — the hybrid direction, 2026-09-20.
+   Zen is the resting state. Coach lives in furniture that is not there until
+   you stop. Cockpit feedback arrives only in the gap between lines, after a
+   grace period, so typing straight on is never interrupted.
+
+   These are WORKING prototypes, not pictures: click a panel and type. The
+   grace period is adjustable per flavour, because picking that number is the
+   whole design decision.
+
+   Self-contained: no CDN, no web fonts, no libraries. Tokens are the app's own
+   --tt-* set; this repo is public and personal and uses no corporate sheet.
+--------------------------------------------------------------------------- */
+:root {
+  --tt-bg: #f4f6f7; --tt-surface: #ffffff; --tt-ink: #14171a;
+  --tt-ink-secondary: #5a646e; --tt-sub: #aab3bc; --tt-line: #dde3e8;
+  --tt-accent: #0f7f79; --tt-on-accent: #ffffff; --tt-incorrect: #c0392b;
+  --tt-warn: #b5761f; --tt-good: #2e7d5b;
+  --page-bg: #eceff1; --page-ink: #14171a; --page-muted: #5a646e; --frame-line: #ccd4da;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+    --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+    --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+    --tt-warn: #d99a43; --tt-good: #4fb78a;
+    --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+  }
+}
+:root[data-theme="dark"] {
+  --tt-bg: #14171a; --tt-surface: #1c2126; --tt-ink: #eaedf1;
+  --tt-ink-secondary: #9aa4ae; --tt-sub: #5b656e; --tt-line: #2b3238;
+  --tt-accent: #3fb8ae; --tt-on-accent: #0c1113; --tt-incorrect: #e2675a;
+  --tt-warn: #d99a43; --tt-good: #4fb78a;
+  --page-bg: #0d1013; --page-ink: #eaedf1; --page-muted: #9aa4ae; --frame-line: #2b3238;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page-bg); color: var(--page-ink); font-family: var(--sans); line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 44px 24px 90px; }
+h1 { font-size: 29px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--page-muted); max-width: 74ch; margin: 0 0 10px; }
+.howto {
+  border: 1px dashed var(--frame-line); border-radius: 8px; padding: 12px 16px;
+  font-size: 14px; color: var(--page-muted); margin: 18px 0 34px; max-width: 74ch;
+}
+.howto b { color: var(--page-ink); }
+kbd {
+  font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--frame-line);
+  border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; background: var(--tt-surface);
+}
+section.mock { margin: 0 0 58px; }
+.mock h2 { font-size: 20px; margin: 0 0 2px; }
+.mock h2 .num { color: var(--tt-accent); font-variant-numeric: tabular-nums; margin-right: 10px; }
+.thesis { color: var(--page-muted); max-width: 80ch; margin: 0 0 14px; }
+.frame { border: 1px solid var(--frame-line); border-radius: 10px; overflow: hidden; background: var(--tt-bg); }
+.frame-bar { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--tt-line); background: var(--tt-surface); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tt-line); }
+.frame-bar .url { margin-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--tt-ink-secondary); }
+.frame-bar .state {
+  margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--tt-sub);
+}
+.frame-bar .state.armed { color: var(--tt-warn); }
+.frame-bar .state.shown { color: var(--tt-accent); }
+
+.controls { display: flex; align-items: center; gap: 16px; margin: 12px 2px 0; font-size: 13px; color: var(--page-muted); flex-wrap: wrap; }
+.controls input[type=range] { width: 190px; accent-color: var(--tt-accent); }
+.controls .val { font-family: var(--mono); color: var(--page-ink); min-width: 4.5em; }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; margin: 14px 2px 0; }
+.notes div { font-size: 14px; }
+.notes b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--page-muted); margin-bottom: 2px; }
+
+/* ---- the zen stage, shared by all three ---------------------------------- */
+.stage { position: relative; min-height: 400px; overflow: hidden; }
+.zen {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 20px; padding: 40px 56px;
+  transition: filter 280ms ease, opacity 280ms ease;
+}
+.ghost { font-family: var(--mono); font-size: 14px; color: var(--tt-sub); opacity: 0.4; text-align: center; max-width: 62ch; }
+.line {
+  font-family: var(--mono); font-size: 23px; line-height: 1.65; text-align: center;
+  max-width: 62ch; outline: none; cursor: text;
+}
+.line .ok { color: var(--tt-ink); }
+.line .bad { color: var(--tt-incorrect); text-decoration: underline; text-underline-offset: 3px; }
+.line .pending { color: var(--tt-sub); }
+.line .caret { display: inline-block; width: 2px; height: 1.05em; vertical-align: text-bottom; background: var(--tt-accent); margin: 0 -1px; animation: blink 1.05s step-end infinite; }
+.line.done .caret { display: none; }
+@keyframes blink { 50% { opacity: 0; } }
+.hint { font-family: var(--mono); font-size: 11px; color: var(--tt-sub); letter-spacing: 0.04em; }
+.dots { display: flex; gap: 5px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--tt-line); }
+.dots i.on { background: var(--tt-accent); }
+.dots i.half { background: var(--tt-sub); }
+
+/* ---- A · Wings ----------------------------------------------------------- */
+.wing {
+  position: absolute; top: 0; bottom: 0; width: 240px; background: var(--tt-surface);
+  border-color: var(--tt-line); border-style: solid; border-width: 0;
+  padding: 20px 18px; opacity: 0; pointer-events: none;
+  transition: transform 260ms cubic-bezier(.22,.8,.3,1), opacity 220ms ease;
+}
+.wing.left { left: 0; border-right-width: 1px; transform: translateX(-14px); }
+.wing.right { right: 0; border-left-width: 1px; transform: translateX(14px); }
+.stage.revealed .wing { opacity: 1; transform: translateX(0); pointer-events: auto; }
+.stage.revealed .zen { filter: none; }
+.wing h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--tt-ink-secondary); font-weight: 600; }
+.edge {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 4px; height: 54px;
+  border-radius: 3px; background: var(--tt-line); opacity: 0.8;
+}
+.edge.l { left: 5px; } .edge.r { right: 5px; }
+/* The wings overlay rather than push, so the centre column reserves their
+   width permanently. The line therefore sits in exactly the same place whether
+   the panels are in or out -- which is the point -- and never runs underneath
+   them, which an earlier draft did. */
+.stage[data-proto="wings"] .zen { padding-left: 264px; padding-right: 264px; }
+.stage[data-proto="wings"] .line { max-width: 46ch; font-size: 21px; }
+.stage[data-proto="wings"] .ghost { max-width: 46ch; }
+.stage.revealed .edge { opacity: 0; }
+
+.step { display: flex; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--tt-line); }
+.step:last-child { border-bottom: 0; }
+.step .bullet { flex: none; width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--tt-line); font-size: 9.5px; display: flex; align-items: center; justify-content: center; color: var(--tt-ink-secondary); }
+.step.done .bullet { background: var(--tt-accent); border-color: var(--tt-accent); color: var(--tt-on-accent); }
+.step.now .bullet { border-color: var(--tt-accent); color: var(--tt-accent); }
+.step .t { font-size: 13px; color: var(--tt-ink); }
+.step.now .t { font-weight: 600; }
+.step .s { font-size: 11px; color: var(--tt-ink-secondary); }
+.why { margin-top: 14px; font-size: 12px; color: var(--tt-ink-secondary); border-left: 2px solid var(--tt-warn); padding-left: 9px; }
+.btn { font: inherit; font-size: 12.5px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--tt-accent); background: var(--tt-accent); color: var(--tt-on-accent); cursor: pointer; margin-top: 14px; }
+.btn.ghost { background: transparent; color: var(--tt-accent); }
+
+.metric { margin-bottom: 14px; }
+.metric .n { font-family: var(--mono); font-size: 27px; line-height: 1; color: var(--tt-ink); font-variant-numeric: tabular-nums; }
+.metric .n.good { color: var(--tt-good); }
+.metric .n.bad { color: var(--tt-incorrect); }
+.metric .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tt-ink-secondary); margin-top: 2px; }
+.keystrip { display: flex; gap: 3px; margin: 10px 0 4px; flex-wrap: wrap; }
+.keystrip i {
+  width: 17px; height: 17px; border-radius: 3px; border: 1px solid var(--tt-line);
+  font-family: var(--mono); font-size: 9px; display: flex; align-items: center; justify-content: center;
+  color: var(--tt-ink-secondary); font-style: normal;
+}
+.keystrip i.h1 { background: color-mix(in srgb, var(--tt-incorrect) 20%, transparent); }
+.keystrip i.h2 { background: color-mix(in srgb, var(--tt-incorrect) 45%, transparent); color: var(--tt-ink); }
+.keystrip i.h3 { background: color-mix(in srgb, var(--tt-incorrect) 70%, transparent); border-color: transparent; color: var(--tt-on-accent); }
+
+/* ---- B · Console --------------------------------------------------------- */
+.topbar, .deck {
+  position: absolute; left: 0; right: 0; background: var(--tt-surface);
+  opacity: 0; pointer-events: none; transition: transform 280ms cubic-bezier(.22,.8,.3,1), opacity 220ms ease;
+}
+.topbar { top: 0; border-bottom: 1px solid var(--tt-line); padding: 10px 20px; transform: translateY(-100%); }
+.deck { bottom: 0; border-top: 1px solid var(--tt-line); padding: 14px 20px; transform: translateY(100%); }
+.stage.revealed .topbar, .stage.revealed .deck { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.topbar-row { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+.pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; background: color-mix(in srgb, var(--tt-accent) 14%, transparent); color: var(--tt-accent); font-weight: 600; }
+.topbar .plan-line { color: var(--tt-ink-secondary); }
+.topbar .plan-line b { color: var(--tt-ink); font-weight: 600; }
+.topbar .steps { margin-left: auto; display: flex; gap: 4px; }
+.topbar .steps i { width: 26px; height: 3px; border-radius: 2px; background: var(--tt-line); }
+.topbar .steps i.done { background: var(--tt-accent); }
+.topbar .steps i.now { background: var(--tt-accent); opacity: 0.45; }
+.deck-row { display: flex; align-items: flex-end; gap: 30px; }
+.deck .metric { margin: 0; }
+.deck .spacer { flex: 1; }
+.deck .coachline { font-size: 13px; color: var(--tt-ink-secondary); max-width: 40ch; }
+.deck .coachline b { color: var(--tt-warn); }
+
+/* ---- C · Bloom ----------------------------------------------------------- */
+.bloom { display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: 0; transform: translateY(6px); transition: opacity 260ms ease, transform 260ms ease; pointer-events: none; }
+.stage.revealed .bloom { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.bloom .verdict { font-family: var(--mono); font-size: 13px; color: var(--tt-ink-secondary); letter-spacing: 0.02em; }
+.bloom .verdict .pass { color: var(--tt-good); }
+.bloom .verdict .fail { color: var(--tt-incorrect); }
+.bloom .next { font-size: 13px; color: var(--tt-ink); }
+.bloom .next b { color: var(--tt-warn); }
+.bloom .acts { display: flex; gap: 8px; }
+.bloom .acts .btn { margin-top: 4px; }
+/* timing colouring applied to the finished line */
+.line .t-fast { color: var(--tt-sub); }
+.line .t-mid { color: var(--tt-ink-secondary); }
+.line .t-slow { color: var(--tt-warn); }
+.stage.revealed .zen .ghost { opacity: 0.18; }
+
+.legend { font-family: var(--mono); font-size: 10.5px; color: var(--tt-sub); display: flex; gap: 14px; }
+.legend span::before { content: "■ "; }
+.legend .f::before { color: var(--tt-sub); }
+.legend .m::before { color: var(--tt-ink-secondary); }
+.legend .s::before { color: var(--tt-warn); }
+.footer { color: var(--page-muted); font-size: 13.5px; border-top: 1px solid var(--frame-line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Zen, with Coach and Cockpit that only arrive when you stop</h1>
+<p class="lede">One base: Zen is what you see while typing — the line and nothing else. Coach is the session structure, in furniture that is not on screen until you are between lines. Cockpit is the feedback, and it waits out a grace period first, so carrying straight on into the next line is never interrupted. The three flavours differ in <em>where the furniture comes from</em>, which turns out to change how the whole thing feels.</p>
+
+<div class="howto">
+  <b>These are live.</b> Click a line and type it — the real Art of War line 347. <kbd>Enter</kbd> finishes the line, <kbd>Backspace</kbd> deletes, <kbd>Esc</kbd> resets. Then <b>stop typing</b> and watch. The grace period is on a slider under each one: if you start the next line before it elapses, nothing appears at all. The state in the top-right of each frame shows <span style="font-family:var(--mono);font-size:12px">TYPING → ARMED → SHOWN</span> so you can see the mechanism working.
+</div>
+
+<!-- A ---------------------------------------------------------------------->
+<section class="mock" id="wings">
+  <h2><span class="num">A</span>Wings — furniture at the edges</h2>
+  <p class="thesis">Coach slides in from the left, Cockpit from the right, and the line never moves: the panels overlay rather than push, because shifting the text you have just been reading is the one thing that would break the calm. Two faint nubs at the edges are the only hint they exist while you type, and hovering an edge pulls its panel in early, so you are never waiting on a timer you did not want.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+    <div class="stage" data-proto="wings" data-delay="900">
+      <div class="edge l"></div><div class="edge r"></div>
+
+      <aside class="wing left">
+        <h4>Session · 20 min</h4>
+        <div class="step done"><i class="bullet">✓</i><div><div class="t">Warm-up</div><div class="s">quotes, semicolons</div></div></div>
+        <div class="step now"><i class="bullet">2</i><div><div class="t">The book</div><div class="s">lines 347–359 · 1 done</div></div></div>
+        <div class="step"><i class="bullet">3</i><div><div class="t">Hard lines</div><div class="s">2 picked for your weak keys</div></div></div>
+        <div class="step"><i class="bullet">4</i><div><div class="t">Review</div><div class="s">what moved today</div></div></div>
+        <p class="why">Quotes are your worst category at 5%. Two of the lines ahead are dense in them.</p>
+        <button class="btn ghost">Drill quotes instead</button>
+      </aside>
+
+      <aside class="wing right">
+        <h4>Last line</h4>
+        <div class="metric"><div class="n" data-wpm>—</div><div class="l">wpm · best 95</div></div>
+        <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+        <div class="metric"><div class="n" data-verdict style="font-size:15px">—</div><div class="l">against 99% · 60 wpm</div></div>
+        <h4 style="margin-top:18px">Error heat</h4>
+        <div class="keystrip">
+          <i>q</i><i>w</i><i class="h1">e</i><i>r</i><i>t</i><i>y</i><i>u</i><i>i</i><i>o</i><i>p</i>
+          <i>a</i><i>s</i><i>d</i><i>f</i><i>g</i><i>h</i><i>j</i><i>k</i><i>l</i><i class="h3">;</i>
+          <i>z</i><i>x</i><i>c</i><i>v</i><i>b</i><i>n</i><i>m</i><i class="h2">,</i><i class="h2">.</i><i class="h3">'</i>
+        </div>
+      </aside>
+
+      <div class="zen">
+        <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+        <div class="line" tabindex="0" data-line></div>
+        <div class="ghost">By shifting his camp and taking circuitous routes…</div>
+        <div class="hint" data-hint>click and type · enter to finish</div>
+        <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="half"></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <label>grace period <input type="range" min="0" max="3000" step="100" value="900" data-delay-input></label>
+    <span class="val" data-delay-val>900 ms</span>
+    <span>· hovering an edge opens that side immediately</span>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>Coach and Cockpit each get real room, so the session plan can stay a plan rather than a sentence. Two independent sides means you can summon one without the other.</div>
+    <div><b>What it costs</b>Movement in peripheral vision is exactly what the Zen base is trying to avoid, and at 62ch the panels crowd the line on a narrow window. Two panels is also two things to dismiss.</div>
+  </div>
+</section>
+
+<!-- B ---------------------------------------------------------------------->
+<section class="mock" id="console">
+  <h2><span class="num">B</span>Console — bands above and below</h2>
+  <p class="thesis">Nothing ever appears beside the line. The coach drops a thin band from the top — where you are in the session, one line of it — and the cockpit rises as a deck from the bottom with the numbers. Motion is vertical, so the line's horizontal measure is untouched and your eye returns to exactly the same place. It is the arrangement that disturbs the reading position least.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+    <div class="stage" data-proto="console" data-delay="1200">
+      <div class="topbar">
+        <div class="topbar-row">
+          <span class="pill">Step 2 of 4</span>
+          <span class="plan-line">The book · <b>lines 347–359</b>, one done · next up two hard lines picked for your quotes</span>
+          <span class="steps"><i class="done"></i><i class="now"></i><i></i><i></i></span>
+        </div>
+      </div>
+
+      <div class="zen">
+        <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+        <div class="line" tabindex="0" data-line></div>
+        <div class="ghost">By shifting his camp and taking circuitous routes…</div>
+        <div class="hint" data-hint>click and type · enter to finish</div>
+        <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="half"></i><i></i><i></i></div>
+      </div>
+
+      <div class="deck">
+        <div class="deck-row">
+          <div class="metric"><div class="n" data-wpm>—</div><div class="l">wpm</div></div>
+          <div class="metric"><div class="n" data-acc>—</div><div class="l">accuracy</div></div>
+          <div class="metric"><div class="n" data-verdict style="font-size:16px">—</div><div class="l">vs 99% · 60 wpm</div></div>
+          <div class="metric"><div class="n" style="font-size:19px">1</div><div class="l">stall over 500 ms</div></div>
+          <div class="spacer"></div>
+          <p class="coachline"><b>Next:</b> line 348, then a hard line dense in apostrophes — your worst category at 5%.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <label>grace period <input type="range" min="0" max="3000" step="100" value="1200" data-delay-input></label>
+    <span class="val" data-delay-val>1200 ms</span>
+    <span>· longer suits this one: the bands are larger movements</span>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>The line's position never changes and nothing enters the reading cone. Vertical bands hold a wide, shallow shape, which suits a row of numbers and a one-line plan better than a tall column does.</div>
+    <div><b>What it costs</b>Shallow bands cannot hold the whole session plan, so Coach is reduced to a sentence and a progress bar; anything more still needs a page of its own.</div>
+  </div>
+</section>
+
+<!-- C ---------------------------------------------------------------------->
+<section class="mock" id="bloom">
+  <h2><span class="num">C</span>Bloom — the line annotates itself</h2>
+  <p class="thesis">No panels at all. When you stop, the line you just typed stays exactly where it is and <em>becomes</em> the feedback: each character re-colours by how long you took over it, so the slow patches are visible in the words themselves, and the verdict and the coach's next move appear directly beneath. Nothing arrives from off-screen, nothing to dismiss — the optical centre never moves, which is the most faithful reading of Zen.</p>
+  <div class="frame">
+    <div class="frame-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="url">127.0.0.1 — art of war</span><span class="state" data-state>idle</span></div>
+    <div class="stage" data-proto="bloom" data-delay="700">
+      <div class="zen">
+        <div class="ghost">36. He must be able to mystify his officers and men by false reports…</div>
+        <div class="line" tabindex="0" data-line></div>
+        <div class="bloom">
+          <div class="legend"><span class="f">fast</span><span class="m">steady</span><span class="s">slow — where you hesitated</span></div>
+          <div class="verdict" data-verdict>—</div>
+          <div class="next"><b>Next:</b> line 348, or drill the apostrophes you keep losing lines to.</div>
+          <div class="acts"><button class="btn">Continue</button><button class="btn ghost">Drill quotes</button><button class="btn ghost">Session plan</button></div>
+        </div>
+        <div class="hint" data-hint>click and type · enter to finish</div>
+        <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="half"></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <label>grace period <input type="range" min="0" max="3000" step="100" value="700" data-delay-input></label>
+    <span class="val" data-delay-val>700 ms</span>
+    <span>· shortest works here: nothing moves, so it cannot interrupt</span>
+  </div>
+  <div class="notes">
+    <div><b>Why it might win</b>The per-character timing on the words themselves is something no competitor shows, and it is immediately legible: you see the hesitation in the phrase that caused it. Zero chrome, zero motion from the edges.</div>
+    <div><b>What it costs</b>There is nowhere for the session plan to live, so Coach shrinks to one sentence and a button. It also needs the keystroke timing to be there — on a line typed before instrumentation it has nothing to colour.</div>
+  </div>
+</section>
+
+<p class="footer">Written 2026-09-20. Live prototypes, not the app: the typing, the diff and the reveal timing are real, the numbers behind them are the real ones from the store where they are not computed from what you type. See <code>docs/UI_Refresh_Notes.md</code>.</p>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TARGET = "37. By altering his arrangements and changing his plans, he keeps the enemy without definite knowledge.";
+
+  // One prototype per stage. The reveal logic is the point of the mockup, so it
+  // is real: a grace timer that any keystroke cancels, armed when the typist
+  // goes quiet and again when a line is finished.
+  function Prototype(stage) {
+    var self = this;
+    this.stage = stage;
+    this.lineEl = stage.querySelector("[data-line]");
+    this.stateEl = stage.closest(".frame").querySelector("[data-state]");
+    this.hintEl = stage.querySelector("[data-hint]");
+    this.flavour = stage.dataset.proto;
+    this.delay = parseInt(stage.dataset.delay, 10);
+    this.typed = "";
+    this.times = [];       // ms of each keypress, from the first
+    this.start = 0;
+    this.finished = false;
+    this.timer = null;
+
+    this.render();
+    this.lineEl.addEventListener("keydown", function (e) { self.onKey(e); });
+    this.lineEl.addEventListener("blur", function () { self.setState(self.stage.classList.contains("revealed") ? "shown" : "idle"); });
+
+    // Hovering an edge opens that side early — only the Wings flavour has edges.
+    if (this.flavour === "wings") {
+      stage.querySelectorAll(".edge").forEach(function (edge) {
+        edge.addEventListener("mouseenter", function () { self.reveal(); });
+      });
+    }
+  }
+
+  Prototype.prototype.setState = function (s) {
+    if (!this.stateEl) return;
+    this.stateEl.textContent = s;
+    this.stateEl.className = "state" + (s === "armed" ? " armed" : s === "shown" ? " shown" : "");
+  };
+
+  Prototype.prototype.onKey = function (e) {
+    if (e.key === "Escape") { e.preventDefault(); this.reset(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!this.typed.length) return;
+      this.finished = true;
+      this.render();
+      this.arm();                       // finishing a line arms the reveal too
+      return;
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      this.typed = this.typed.slice(0, -1);
+      this.times.pop();
+      this.hide();
+      this.render();
+      this.arm();
+      return;
+    }
+    if (e.key.length !== 1) return;     // ignore shift, arrows, function keys
+
+    e.preventDefault();
+    if (this.finished) this.reset();    // typing on into the next line
+    if (!this.typed.length) this.start = Date.now();
+    this.typed += e.key;
+    this.times.push(Date.now() - this.start);
+    this.hide();                        // any keystroke dismisses, immediately
+    this.render();
+    this.arm();
+  };
+
+  // Arm the grace period. Every keystroke calls this, so the timer only ever
+  // fires once typing has actually stopped -- which is the whole trick.
+  Prototype.prototype.arm = function () {
+    var self = this;
+    window.clearTimeout(this.timer);
+    if (!this.typed.length) { this.setState("idle"); return; }
+    this.setState("armed");
+    this.timer = window.setTimeout(function () { self.reveal(); }, this.delay);
+  };
+
+  Prototype.prototype.reveal = function () {
+    if (!this.typed.length) return;
+    this.stage.classList.add("revealed");
+    this.setState("shown");
+    this.fillMetrics();
+    if (this.flavour === "bloom") this.render(true);
+  };
+
+  Prototype.prototype.hide = function () {
+    if (this.stage.classList.contains("revealed")) {
+      this.stage.classList.remove("revealed");
+      if (this.flavour === "bloom") this.render();
+    }
+  };
+
+  Prototype.prototype.reset = function () {
+    window.clearTimeout(this.timer);
+    this.typed = ""; this.times = []; this.finished = false;
+    this.stage.classList.remove("revealed");
+    this.setState("idle");
+    this.render();
+  };
+
+  // Score it the way the app does: correct characters over target length, and
+  // words per minute as correct characters / 5 over the elapsed minutes.
+  Prototype.prototype.score = function () {
+    var correct = 0;
+    for (var i = 0; i < this.typed.length; i++) {
+      if (this.typed[i] === TARGET[i]) correct++;
+    }
+    var seconds = this.times.length > 1 ? (this.times[this.times.length - 1] - this.times[0]) / 1000 : 0;
+    // Same guard the app now carries: a duration this short is not a human
+    // typing, and one such record was setting a fake personal best in the real
+    // store (1236 wpm against an empty line). Below a quarter of a second we
+    // report nothing rather than a number that is worse than nothing.
+    var wpm = seconds >= 0.25 ? (correct * 60) / (5 * seconds) : 0;
+    var accuracy = this.typed.length ? correct / Math.max(this.typed.length, 1) : 0;
+    return { correct: correct, wpm: wpm, accuracy: accuracy, seconds: seconds };
+  };
+
+  Prototype.prototype.fillMetrics = function () {
+    var s = this.score();
+    var stage = this.stage;
+    var wpmEl = stage.querySelector("[data-wpm]");
+    var accEl = stage.querySelector("[data-acc]");
+    var verdictEl = stage.querySelector("[data-verdict]");
+    var passed = s.accuracy >= 0.99 && s.wpm >= 60;
+
+    if (wpmEl) wpmEl.textContent = s.wpm ? s.wpm.toFixed(0) : "—";
+    if (accEl) {
+      accEl.textContent = (s.accuracy * 100).toFixed(0) + "%";
+      accEl.className = "n " + (s.accuracy >= 0.99 ? "good" : "bad");
+    }
+    if (verdictEl && this.flavour !== "bloom") {
+      verdictEl.textContent = passed ? "passed" : (s.accuracy < 0.99 ? "accuracy short" : "too slow");
+      verdictEl.className = "n " + (passed ? "good" : "bad");
+    }
+    if (verdictEl && this.flavour === "bloom") {
+      verdictEl.innerHTML =
+        (passed ? '<span class="pass">passed</span>' : '<span class="fail">' +
+          (s.accuracy < 0.99 ? "accuracy short" : "under 60 wpm") + "</span>") +
+        " · " + s.wpm.toFixed(0) + " wpm · " + (s.accuracy * 100).toFixed(0) + "% · " +
+        s.seconds.toFixed(1) + "s";
+    }
+  };
+
+  // Render the line. `timed` re-colours the finished line by per-character
+  // latency instead of by correctness -- the Bloom flavour's whole idea.
+  Prototype.prototype.render = function (timed) {
+    var html = "";
+    var i;
+    if (timed && this.times.length > 2) {
+      var deltas = [];
+      for (i = 1; i < this.times.length; i++) deltas.push(this.times[i] - this.times[i - 1]);
+      var sorted = deltas.slice().sort(function (a, b) { return a - b; });
+      var median = sorted[Math.floor(sorted.length / 2)] || 1;
+      for (i = 0; i < this.typed.length; i++) {
+        var d = i === 0 ? median : this.times[i] - this.times[i - 1];
+        var cls = d > median * 2.2 ? "t-slow" : d > median * 1.3 ? "t-mid" : "t-fast";
+        if (this.typed[i] !== TARGET[i]) cls = "bad";
+        html += '<span class="' + cls + '">' + escapeChar(this.typed[i]) + "</span>";
+      }
+    } else {
+      for (i = 0; i < this.typed.length; i++) {
+        html += '<span class="' + (this.typed[i] === TARGET[i] ? "ok" : "bad") + '">' +
+                escapeChar(this.typed[i]) + "</span>";
+      }
+    }
+    if (!this.finished) html += '<span class="caret"></span>';
+    html += '<span class="pending">' + escapeChar(TARGET.slice(this.typed.length)) + "</span>";
+    this.lineEl.innerHTML = html;
+    this.lineEl.classList.toggle("done", this.finished);
+    if (this.hintEl) {
+      this.hintEl.textContent = this.typed.length
+        ? (this.finished ? "line finished · stop and wait, or type on" : "enter to finish · esc to reset")
+        : "click and type · enter to finish";
+    }
+  };
+
+  function escapeChar(s) {
+    return s.replace(/[&<>]/g, function (c) {
+      return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;";
+    });
+  }
+
+  document.querySelectorAll("[data-proto]").forEach(function (stage) {
+    var proto = new Prototype(stage);
+    var section = stage.closest("section");
+    var slider = section.querySelector("[data-delay-input]");
+    var out = section.querySelector("[data-delay-val]");
+    if (slider) {
+      slider.addEventListener("input", function () {
+        proto.delay = parseInt(slider.value, 10);
+        out.textContent = slider.value + " ms";
+        proto.arm();
+      });
+    }
+  });
+})();
+</script>
+</body>
+</html>
